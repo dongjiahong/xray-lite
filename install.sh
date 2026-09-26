@@ -4,10 +4,10 @@
 # Xray-Lite 一键安装脚本
 # 
 # Usage / 用法:
-#   curl -fsSL https://raw.githubusercontent.com/undead-undead/xray-lite/main/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/dongjiahong/xray-lite/main/install.sh | bash
 #
 # Or / 或者:
-#   wget -qO- https://raw.githubusercontent.com/undead-undead/xray-lite/main/install.sh | bash
+#   wget -qO- https://raw.githubusercontent.com/dongjiahong/xray-lite/main/install.sh | bash
 
 set -e
 
@@ -19,8 +19,8 @@ BLUE='\033[0;34m'
 NC='\033[0m'
 
 # Version / 版本
-VERSION="v0.4.6"
-REPO="undead-undead/xray-lite"
+VERSION="v0.4.7"
+REPO="dongjiahong/xray-lite"
 
 echo -e "${BLUE}=========================================${NC}"
 echo -e "${BLUE}  Xray-Lite One-Click Installation${NC}"
@@ -262,7 +262,37 @@ cat > config.json << EOF
 }
 EOF
 
-# Create client configuration
+# Client transport settings / 客户端传输设置
+# 服务端用 XHTTP 时客户端必须走 xhttp，否则会按裸 TCP 解析而连不上
+if [ "$ENABLE_XHTTP" = "y" ]; then
+    CLIENT_STREAM_SETTINGS="\"network\": \"xhttp\",
+      \"security\": \"reality\",
+      \"realitySettings\": {
+        \"show\": false,
+        \"fingerprint\": \"chrome\",
+        \"serverName\": \"$DOMAIN\",
+        \"publicKey\": \"$PUBLIC_KEY\",
+        \"shortId\": \"$SHORT_ID\"
+      },
+      \"xhttpSettings\": {
+        \"mode\": \"$XHTTP_MODE\",
+        \"path\": \"$XHTTP_PATH\",
+        \"host\": \"$XHTTP_HOST\"
+      }"
+else
+    CLIENT_STREAM_SETTINGS="\"network\": \"tcp\",
+      \"security\": \"reality\",
+      \"realitySettings\": {
+        \"show\": false,
+        \"fingerprint\": \"chrome\",
+        \"serverName\": \"$DOMAIN\",
+        \"publicKey\": \"$PUBLIC_KEY\",
+        \"shortId\": \"$SHORT_ID\",
+        \"spiderX\": \"/\"
+      }"
+fi
+
+# Create client configuration (Xray JSON) / 生成客户端配置 (Xray)
 cat > client-config.json << EOF
 {
   "log": {"loglevel": "info"},
@@ -286,19 +316,88 @@ cat > client-config.json << EOF
       }]
     },
     "streamSettings": {
-      "network": "tcp",
-      "security": "reality",
-      "realitySettings": {
-        "show": false,
-        "fingerprint": "chrome",
-        "serverName": "$DOMAIN",
-        "publicKey": "$PUBLIC_KEY",
-        "shortId": "$SHORT_ID",
-        "spiderX": "/"
-      }
+      $CLIENT_STREAM_SETTINGS
     }
   }]
 }
+EOF
+
+# mihomo / Clash Verge Rev proxy entry / mihomo 客户端节点
+if [ "$ENABLE_XHTTP" = "y" ]; then
+    MIHOMO_PROXY="  - name: \"xray-lite\"
+    type: vless
+    server: $SERVER_IP
+    port: $PORT
+    uuid: $CLIENT_UUID
+    udp: true
+    tls: true
+    servername: $DOMAIN
+    client-fingerprint: chrome
+    reality-opts:
+      public-key: $PUBLIC_KEY
+      short-id: $SHORT_ID
+    # xhttp 传输，需要 mihomo 内核 >= v1.19.22
+    # mode: auto 在 Reality 下等价于 stream-one。若服务端是 v0.4.6 及更早版本，
+    # 请把 mode 改成 stream-up，否则每条连接会多等 2 秒。
+    network: xhttp
+    alpn: [h2]
+    xhttp-opts:
+      path: \"$XHTTP_PATH\"
+      mode: auto"
+else
+    MIHOMO_PROXY="  - name: \"xray-lite\"
+    type: vless
+    server: $SERVER_IP
+    port: $PORT
+    uuid: $CLIENT_UUID
+    udp: true
+    tls: true
+    servername: $DOMAIN
+    client-fingerprint: chrome
+    reality-opts:
+      public-key: $PUBLIC_KEY
+      short-id: $SHORT_ID
+    network: tcp"
+fi
+
+# Create mihomo configuration / 生成 mihomo 客户端配置
+cat > clash-verge.yaml << EOF
+# Xray-Lite 客户端配置 — Clash Verge Rev / mihomo
+# 由 install.sh 生成于 $(date '+%Y-%m-%d %H:%M:%S')
+# 直接把本文件导入 Clash Verge Rev（配置文件 -> 新建/导入本地文件）即可使用
+# 注意：mihomo 没有 spider-x 字段，那是 Xray 的概念，写进来会被忽略
+
+mixed-port: 7890
+allow-lan: false
+mode: rule
+log-level: info
+external-controller: 127.0.0.1:9090
+
+dns:
+  enable: true
+  listen: 0.0.0.0:5335
+  enhanced-mode: fake-ip
+  fake-ip-range: 198.18.0.1/16
+  nameserver:
+    - 223.5.5.5
+    - 119.29.29.29
+  fallback:
+    - 8.8.8.8
+    - 1.1.1.1
+
+proxies:
+$MIHOMO_PROXY
+
+proxy-groups:
+  - name: "PROXY"
+    type: select
+    proxies:
+      - "xray-lite"
+      - DIRECT
+
+rules:
+  - GEOIP,CN,DIRECT
+  - MATCH,PROXY
 EOF
 
 # Set permissions
@@ -331,7 +430,8 @@ LimitNOFILE=1000000
 LimitNPROC=512
 
 SyslogIdentifier=xray-lite
-StandardOutput=null
+# tracing 默认写 stdout，必须收进 journal，否则 journalctl 看不到任何日志
+StandardOutput=journal
 StandardError=journal
 
 [Install]
@@ -435,8 +535,9 @@ echo "  Public Key / 公钥: $PUBLIC_KEY"
 echo "  Short ID / 短 ID: $SHORT_ID"
 echo ""
 echo -e "${BLUE}Client Configuration / 客户端配置:${NC}"
-echo "  Configuration file / 配置文件: $INSTALL_DIR/client-config.json"
-echo "  Download / 下载: scp root@$SERVER_IP:$INSTALL_DIR/client-config.json ."
+echo "  Clash Verge Rev / mihomo (推荐): $INSTALL_DIR/clash-verge.yaml"
+echo "  Xray 客户端:                     $INSTALL_DIR/client-config.json"
+echo "  Download / 下载: scp root@$SERVER_IP:$INSTALL_DIR/clash-verge.yaml ."
 echo ""
 echo -e "${BLUE}Service Management / 服务管理:${NC}"
 echo "  Start / 启动:   systemctl start xray-lite"
@@ -452,7 +553,7 @@ echo "  rm -rf $INSTALL_DIR"
 echo "  rm /etc/systemd/system/xray-lite.service"
 echo ""
 echo -e "${YELLOW}Next Steps / 下一步:${NC}"
-echo "  1. Download client configuration / 下载客户端配置"
-echo "  2. Import into Xray client / 导入到 Xray 客户端"
+echo "  1. Download client config / 下载客户端配置 (clash-verge.yaml)"
+echo "  2. Import into Clash Verge Rev (or other client) / 导入到客户端"
 echo "  3. Connect and enjoy! / 连接并享受！"
 echo ""

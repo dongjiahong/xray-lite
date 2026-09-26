@@ -4,7 +4,7 @@ A lightweight, high-performance Rust VLESS proxy with Reality & XHTTP support. P
 
 一个轻量级、高性能的纯 Rust 实现的 VLESS + Reality + xhttp 代理服务器。基于 eBPF 技术的 XDP 内核防火墙，实现极致隐身与安全。【特别说明：不带流控，Reality + xhttp(客户端模式选auto)已经消除了套娃特征】
 
-[Documentation](./docs/Home.md) | [x-ui-lite Panel](https://github.com/undead-undead/x-ui-lite) | [Report Bug](https://github.com/undead-undead/xray-lite/issues)
+[Documentation](./docs/Home.md) | [x-ui-lite Panel](https://github.com/undead-undead/x-ui-lite) | [Report Bug](https://github.com/dongjiahong/xray-lite/issues)
 
 
 
@@ -16,16 +16,27 @@ A lightweight, high-performance Rust VLESS proxy with Reality & XHTTP support. P
 
 ### 1. Standard Installation (Recommended) / 标准版安装（推荐）
 
-> **Current Version: v0.4.6**
+> **Current Version: v0.4.7**
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/undead-undead/xray-lite/main/install.sh)
+bash <(curl -fsSL https://raw.githubusercontent.com/dongjiahong/xray-lite/main/install.sh)
 ```
 
-### 2. 🔴 **[XDP Installation (Performance Enhanced) / XDP 版安装（性能增强版，推荐！！）](https://github.com/undead-undead/xray-lite/blob/main/docs/XDP_Features.md)**
+安装脚本会询问端口和是否启用 XHTTP，装完在 `/opt/xray-lite/` 下生成**两份客户端配置**，直接取下来导入即可：
 
-> **Current Version: v0.6.0-xdp (Rate Limit)**
-> 
+| 文件 | 用途 |
+| :--- | :--- |
+| `clash-verge.yaml` | Clash Verge Rev / mihomo，导入即用（需内核 ≥ v1.19.22） |
+| `client-config.json` | Xray 系客户端（v2rayN / v2rayNG 等） |
+
+```bash
+scp root@<你的服务器IP>:/opt/xray-lite/clash-verge.yaml .
+```
+
+### 2. 🔴 **[XDP Installation (Performance Enhanced) / XDP 版安装（性能增强版）](https://github.com/undead-undead/xray-lite/blob/main/docs/XDP_Features.md)**
+
+> ⚠️ XDP 分支只存在于上游仓库，本 fork 未包含。
+
 > **Kernel Recommendations / 内核达标推荐**: 
 > - **Optimal (最佳)**: Linux Kernel **≥ 5.15** (e.g., Ubuntu 22.04+, Debian 12+) - *Full XDP support.*
 > - **Minimum (最低)**: Linux Kernel **≥ 5.4** - *Basic XDP support.*
@@ -45,14 +56,28 @@ ip link show eth0
 
 ![XDP Success Verification](docs/assets/xdp_success.png)
 
+## Client Configuration / 客户端配置
+
+**服务端和客户端的传输方式必须一致**，不一致的表现是服务端日志里只有 `📥 新连接来自` 之后就没有下文。`install.sh` 会按你选的传输方式生成匹配的配置：
+
+| 服务端 | mihomo (`clash-verge.yaml`) | Xray 客户端 |
+| :--- | :--- | :--- |
+| 启用 XHTTP | `network: xhttp` + `alpn: [h2]` + `xhttp-opts` | `"network": "xhttp"` |
+| 未启用 XHTTP | `network: tcp` | `"network": "tcp"` |
+
+两个容易踩的坑：
+
+- mihomo 的 xhttp 传输需要内核 **≥ v1.19.22**（Clash Verge Rev 的设置页能看到内核版本）。低版本内核会把未知的 `network` 值当 tcp 处理，于是连不上。
+- mihomo **没有** `spider-x` 字段，那是 Xray 的概念，写进 YAML 会被静默忽略。
+
 ## Graphical Panel / 图形化面板
 
 [x-ui-lite](https://github.com/undead-undead/x-ui-lite) is a lightweight web panel designed specifically for Xray-lite.
-- **Hot Reload**: Supports seamless configuration updates for both **v0.4.6** (Standard) and **v0.6.0** (XDP) without service interruption.
-- **Easy Management**: Visualize your traffic, manage clients, and monitor kernel-level XDP stats.
+- **Hot Reload**: Supports seamless configuration updates without service interruption.
+- **Easy Management**: Visualize your traffic, manage clients, and monitor XDP stats.
 
 [x-ui-lite](https://github.com/undead-undead/x-ui-lite) 是专为 Xray-lite 设计的轻量化面板。
-- **热重载支持**：完美适配 **v0.4.6** (标准版) 与 **v0.6.0** (XDP 版)，配置变更即时生效，无需重启服务。
+- **热重载支持**：配置变更即时生效，无需重启服务。
 - **便捷管理**：可视化流量统计、客户端管理及 XDP 内核防火墙状态监控。
 
 
