@@ -60,33 +60,6 @@ bash <(curl -fsSL https://raw.githubusercontent.com/dongjiahong/xray-lite/main/u
 - mihomo 的 xhttp 传输需要内核 **≥ v1.19.22**（Clash Verge Rev 的设置页能看到内核版本）。低版本内核会把未知的 `network` 值当 tcp 处理，于是连不上。
 - mihomo **没有** `spider-x` 字段，那是 Xray 的概念，写进 YAML 会被静默忽略。
 
-## Graphical Panel / 图形化面板
-
-[x-ui-lite](https://github.com/undead-undead/x-ui-lite) is a lightweight web panel designed specifically for Xray-lite.
-- **Hot Reload**: Supports seamless configuration updates without service interruption.
-- **Easy Management**: Visualize your traffic and manage clients.
-
-[x-ui-lite](https://github.com/undead-undead/x-ui-lite) 是专为 Xray-lite 设计的轻量化面板。
-- **热重载支持**：配置变更即时生效，无需重启服务。
-- **便捷管理**：可视化流量统计与客户端管理。
-
-
-
-
-
-If you think the project is good, you can support the developers.
-
-
-https://buymeacoffee.com/undeadundead
-
-
-crypto:
-
-Sol: 9QFKQ3jpBSuNPLZQH1uq5GrJm4RDKue82zeVaXwazcmj
-
-
-Base：0x4cf0b79aea1c229dfb1df9e2b40ea5dd04f37969
-
 
 ## Contributing / 贡献
 
