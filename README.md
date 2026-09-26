@@ -1,8 +1,8 @@
 # Xray-Lite
 
-A lightweight, high-performance Rust VLESS proxy with Reality & XHTTP support. Powered by eBPF kernel-level XDP Firewall for ultimate stealth.
+A lightweight, high-performance Rust VLESS proxy with Reality & XHTTP support.
 
-一个轻量级、高性能的纯 Rust 实现的 VLESS + Reality + xhttp 代理服务器。基于 eBPF 技术的 XDP 内核防火墙，实现极致隐身与安全。【特别说明：不带流控，Reality + xhttp(客户端模式选auto)已经消除了套娃特征】
+一个轻量级、高性能的纯 Rust 实现的 VLESS + Reality + xhttp 代理服务器。【特别说明：不带流控，Reality + xhttp(客户端模式选auto)已经消除了套娃特征】
 
 [Documentation](./docs/Home.md) | [x-ui-lite Panel](https://github.com/undead-undead/x-ui-lite) | [Report Bug](https://github.com/dongjiahong/xray-lite/issues)
 
@@ -14,7 +14,7 @@ A lightweight, high-performance Rust VLESS proxy with Reality & XHTTP support. P
 >
 > **注意**：此为**静态编译版本**，完美适配**任何 Linux 系统** (Debian, Ubuntu, CentOS, Alpine 等)，无需担心依赖问题。
 
-### 1. Standard Installation (Recommended) / 标准版安装（推荐）
+### Installation / 安装
 
 > **Current Version: v0.4.7**
 
@@ -33,28 +33,18 @@ bash <(curl -fsSL https://raw.githubusercontent.com/dongjiahong/xray-lite/main/i
 scp root@<你的服务器IP>:/opt/xray-lite/clash-verge.yaml .
 ```
 
-### 2. 🔴 **[XDP Installation (Performance Enhanced) / XDP 版安装（性能增强版）](https://github.com/undead-undead/xray-lite/blob/main/docs/XDP_Features.md)**
-
-> ⚠️ XDP 分支只存在于上游仓库，本 fork 未包含。
-
-> **Kernel Recommendations / 内核达标推荐**: 
-> - **Optimal (最佳)**: Linux Kernel **≥ 5.15** (e.g., Ubuntu 22.04+, Debian 12+) - *Full XDP support.*
-> - **Minimum (最低)**: Linux Kernel **≥ 5.4** - *Basic XDP support.*
-> - **Note**: AMD64 Architecture & Root privileges required.
+## Uninstall / 卸载
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/undead-undead/xray-lite/feature/dynamic-xdp/install.sh)
+bash <(curl -fsSL https://raw.githubusercontent.com/dongjiahong/xray-lite/main/uninstall.sh)
 ```
 
-### Deployment Verification / 部署验证
+默认会先把 `config.json`（含 Reality 私钥与 UUID）和两份客户端配置备份到 `~/xray-lite-backup-<时间戳>/`，再停服务、删安装目录、清理日志轮转配置；防火墙放行规则默认保留。
 
-```bash
-# Verify XDP Attachment / 验证 XDP 挂载
-ip link show eth0
-# Output: prog/xdp id 366 tag 480c33de76109440 jited
-```
-
-![XDP Success Verification](docs/assets/xdp_success.png)
+| 选项 | 作用 |
+| :--- | :--- |
+| `--purge` | 不备份配置，直接删除 |
+| `--remove-firewall` | 一并删除安装时添加的 ufw / firewalld 端口放行规则 |
 
 ## Client Configuration / 客户端配置
 
@@ -74,11 +64,11 @@ ip link show eth0
 
 [x-ui-lite](https://github.com/undead-undead/x-ui-lite) is a lightweight web panel designed specifically for Xray-lite.
 - **Hot Reload**: Supports seamless configuration updates without service interruption.
-- **Easy Management**: Visualize your traffic, manage clients, and monitor XDP stats.
+- **Easy Management**: Visualize your traffic and manage clients.
 
 [x-ui-lite](https://github.com/undead-undead/x-ui-lite) 是专为 Xray-lite 设计的轻量化面板。
 - **热重载支持**：配置变更即时生效，无需重启服务。
-- **便捷管理**：可视化流量统计、客户端管理及 XDP 内核防火墙状态监控。
+- **便捷管理**：可视化流量统计与客户端管理。
 
 
 
