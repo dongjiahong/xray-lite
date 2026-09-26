@@ -28,28 +28,43 @@ jobs:
         with:
           targets: ${{ matrix.target }}
 
+      - name: Detect optional features
+        id: features
+        run: |
+          # Check if XDP feature exists in Cargo.toml
+          if grep -q "^xdp = " Cargo.toml; then
+            echo "args=--features xdp" >> "$GITHUB_OUTPUT"
+            echo "xdp=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "args=" >> "$GITHUB_OUTPUT"
+            echo "xdp=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Build Static Binary
         run: |
           cargo install cross
-          # Check if XDP feature exists in Cargo.toml
-          if grep -q "xdp =" Cargo.toml; then
-            cross build --release --target ${{ matrix.target }} --features xdp
-          else
-            cross build --release --target ${{ matrix.target }}
-          fi
+          cross build --release --target ${{ matrix.target }} ${{ steps.features.outputs.args }}
 
       - name: Prepare Release Assets
         run: |
           mkdir dist
           # Standard names
-          cp target/${{ matrix.target }}/release/vless-server dist/vless-server-linux-${{ matrix.arch == 'amd64' && 'x86_64' || 'aarch64' }}
-          cp target/${{ matrix.target }}/release/keygen dist/keygen-linux-${{ matrix.arch == 'amd64' && 'x86_64' || 'aarch64' }}
-          cp target/${{ matrix.target }}/release/genconfig dist/genconfig-linux-${{ matrix.arch == 'amd64' && 'x86_64' || 'aarch64' }}
-          
-          # Compatibility names for x-ui panel (XDP version)
+          SUFFIX=${{ matrix.arch == 'amd64' && 'x86_64' || 'aarch64' }}
+          cp target/${{ matrix.target }}/release/vless-server dist/vless-server-linux-${SUFFIX}
+          cp target/${{ matrix.target }}/release/keygen dist/keygen-linux-${SUFFIX}
+          cp target/${{ matrix.target }}/release/genconfig dist/genconfig-linux-${SUFFIX}
+
           if [ "${{ matrix.arch }}" = "amd64" ]; then
+            # install.sh 在 amd64 上按这个名字找标准版二进制
+            cp target/${{ matrix.target }}/release/vless-server dist/xray-linux-amd64
+          fi
+
+          # 仅当真的编了 xdp feature 时才产出 -xdp 别名，避免名字与内容不符
+          if [ "${{ steps.features.outputs.xdp }}" = "true" ] && [ "${{ matrix.arch }}" = "amd64" ]; then
             cp target/${{ matrix.target }}/release/vless-server dist/xray-linux-amd64-xdp
           fi
+
+          ls -lh dist
 
       - name: Upload Release
         uses: softprops/action-gh-release@v1

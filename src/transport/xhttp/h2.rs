@@ -217,8 +217,13 @@ impl H2Handler {
             let user_agent = request.headers().get("user-agent").and_then(|v| v.to_str().ok()).unwrap_or("");
             let is_pc = user_agent.contains("Go-http-client");
 
+            // 只有 stream-up / packet-up 会先发 GET 注册 session，其 POST 路径带 session 段。
+            // stream-one（mihomo mode=auto + Reality 的默认选择）只有一个 POST，路径就是 base path，
+            // 不存在也不会出现配对的 GET，等待纯属白等 2 秒。
+            let session_expected = path.trim_end_matches('/') != config.path.trim_end_matches('/');
+
             // 等候配对逻辑
-            if !is_pc {
+            if !is_pc && session_expected {
                 for _ in 0..40 {
                     let found = SESSIONS.contains_key(&path);
                     if found { break; }

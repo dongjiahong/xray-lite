@@ -2,23 +2,18 @@
 ///
 /// This program demonstrates how Reality authentication is injected
 /// into ServerHello.random field.
-use vless_reality_xhttp::transport::reality::server_rustls::RealityServerRustls;
+use rustls::reality::{inject_auth, RealityConfig};
 
 fn main() {
     println!("=== Reality Authentication Demo ===\n");
 
-    // 1. Create Reality server with a test private key
+    // 1. Create Reality config with a test private key
     let private_key = vec![0x42; 32]; // Test key: all bytes are 0x42
-    println!("1. Creating Reality server...");
+    println!("1. Creating Reality config...");
     println!("   Private key: {:02x?}...", &private_key[0..8]);
 
-    let server = RealityServerRustls::new(
-        private_key,
-        Some("www.microsoft.com:443".to_string()),
-        vec![],
-    )
-    .expect("Failed to create Reality server");
-    println!("   ✓ Server created successfully\n");
+    let config = RealityConfig::new(private_key);
+    println!("   ✓ Config created successfully\n");
 
     // 2. Simulate ServerHello.random generation
     let mut server_random = [0u8; 32];
@@ -37,9 +32,7 @@ fn main() {
 
     // 4. Inject Reality authentication
     println!("4. Injecting Reality authentication...");
-    server
-        .test_inject_auth(&mut server_random, &client_random)
-        .expect("Failed to inject Reality auth");
+    inject_auth(&mut server_random, &config, &client_random).expect("Failed to inject Reality auth");
     println!("   ✓ Authentication injected\n");
 
     // 5. Show modified ServerHello.random
@@ -69,9 +62,7 @@ fn main() {
     for (i, byte) in server_random2.iter_mut().enumerate() {
         *byte = i as u8;
     }
-    server
-        .test_inject_auth(&mut server_random2, &client_random)
-        .expect("Failed to inject Reality auth");
+    inject_auth(&mut server_random2, &config, &client_random).expect("Failed to inject Reality auth");
 
     if server_random == server_random2 {
         println!("   ✓ HMAC is deterministic (same input → same output)");

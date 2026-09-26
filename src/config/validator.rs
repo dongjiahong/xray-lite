@@ -115,6 +115,7 @@ mod tests {
                         email: "".to_string(),
                     }],
                     decryption: "none".to_string(),
+                    sniffing: Default::default(),
                 },
                 stream_settings: StreamSettings {
                     network: Network::Tcp,
@@ -128,6 +129,7 @@ mod tests {
                         fingerprint: "chrome".to_string(),
                     }),
                     xhttp_settings: None,
+                    sockopt: Default::default(),
                 },
             }],
             outbounds: vec![Outbound {
@@ -155,12 +157,14 @@ mod tests {
                         email: "".to_string(),
                     }],
                     decryption: "none".to_string(),
+                    sniffing: Default::default(),
                 },
                 stream_settings: StreamSettings {
                     network: Network::Tcp,
                     security: Security::None,
                     reality_settings: None,
                     xhttp_settings: None,
+                    sockopt: Default::default(),
                 },
             }],
             outbounds: vec![Outbound {
