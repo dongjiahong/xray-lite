@@ -4,6 +4,13 @@ on:
   push:
     tags:
       - "v*"
+  # fork 里的 tag 触发有时不生效，可用此入口手动对已有 tag 构建发布
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "要构建发布的已有 tag，例如 v0.4.7"
+        required: true
+        type: string
 
 permissions:
   contents: write
@@ -13,6 +20,8 @@ jobs:
     name: Build Static Binary
     runs-on: ubuntu-latest
     strategy:
+      # 两个架构的 job 都会上传到同一个 Release，串行避免并发创建/追加竞态
+      max-parallel: 1
       matrix:
         include:
           - target: x86_64-unknown-linux-musl
@@ -22,6 +31,12 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+
+      - name: Resolve release tag
+        id: rel
+        run: echo "tag=${{ inputs.tag || github.ref_name }}" >> "$GITHUB_OUTPUT"
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -67,7 +82,7 @@ jobs:
           ls -lh dist
 
       - name: Upload Release
-        uses: softprops/action-gh-release@v1
-        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ steps.rel.outputs.tag }}
           files: dist/*
