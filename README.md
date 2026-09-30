@@ -33,6 +33,35 @@ bash <(curl -fsSL https://raw.githubusercontent.com/dongjiahong/xray-lite/main/i
 scp root@<你的服务器IP>:/opt/xray-lite/clash-verge.yaml .
 ```
 
+### Deployment Mode / 部署方式
+
+安装时会问你用哪种方式托管进程：
+
+| 方式 | 适用 | 管理 |
+| :--- | :--- | :--- |
+| `systemd service`（默认） | Debian / Ubuntu / CentOS 等有 systemd 的系统 | `systemctl start/stop/restart/status xray-lite`，日志 `journalctl -u xray-lite -f` |
+| `manual run` | Alpine 等无 systemd 的系统，或不想交给 init 托管 | `/opt/xray-lite/run.sh start/stop/restart/status/log`，日志写 `/opt/xray-lite/xray-lite.log` |
+
+- 没有 `systemctl` 的环境**自动**切到手动运行模式，不会再生成 systemd unit 和 journald 轮转配置。
+- 手动模式用 `nohup` 后台运行，PID 记在 `/opt/xray-lite/xray-lite.pid`；日志超过 10MB 会在下次启动时轮转为 `xray-lite.log.1`（无 journald 就没有系统级轮转，只能这样兜底）。
+- 手动模式**不会开机自启**。Alpine 上要自启：
+
+```bash
+echo '/opt/xray-lite/run.sh start' > /etc/local.d/xray-lite.start
+chmod +x /etc/local.d/xray-lite.start
+rc-update add local default
+```
+
+跳过交互直接指定部署方式：
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/dongjiahong/xray-lite/main/install.sh) --manual
+# 或者用环境变量 / or via env
+XRAY_LITE_DEPLOY=systemd curl -fsSL https://raw.githubusercontent.com/dongjiahong/xray-lite/main/install.sh | bash
+```
+
+`uninstall.sh` 两种模式都能卸：它会停掉 systemd 服务、`pkill` 掉手动模式起的进程，再删掉安装目录（含 `run.sh` 与日志）。
+
 ## Uninstall / 卸载
 
 ```bash

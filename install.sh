@@ -8,6 +8,15 @@
 #
 # Or / 或者:
 #   wget -qO- https://raw.githubusercontent.com/dongjiahong/xray-lite/main/install.sh | bash
+#
+# Options / 选项:
+#   --systemd   安装为 systemd 服务 / install as a systemd service
+#   --manual    手动运行模式（生成 run.sh）/ manual run mode
+#   不带参数时交互选择；无 systemd 的系统（如 Alpine）自动用手动运行模式
+#   Without arguments the mode is chosen interactively; systems without systemd fall back to manual mode
+#
+#   bash <(curl -fsSL .../install.sh) --manual
+#   XRAY_LITE_DEPLOY=manual curl -fsSL .../install.sh | bash
 
 set -e
 
@@ -64,13 +73,13 @@ echo ""
 
 # Stop existing service / 停止现有服务
 echo -e "${YELLOW}Checking for existing installation... / 检查现有安装...${NC}"
-if systemctl is-active --quiet xray-lite; then
+if [ "$SYSTEMD_AVAILABLE" = "y" ] && systemctl is-active --quiet xray-lite; then
     echo "Stopping existing xray-lite service... / 停止现有 xray-lite 服务..."
     systemctl stop xray-lite >/dev/null 2>&1
     systemctl disable xray-lite >/dev/null 2>&1
 fi
 
-# Kill any lingering vless-server processes
+# Kill any lingering vless-server processes (covers manual mode)
 pkill -f vless-server || true
 
 echo ""
@@ -81,6 +90,72 @@ echo -e "${YELLOW}[1/6] Creating installation directory... / 创建安装目录.
 mkdir -p $INSTALL_DIR
 cd $INSTALL_DIR
 echo -e "${GREEN}✓ Directory created / 目录已创建: $INSTALL_DIR${NC}"
+echo ""
+
+# Deployment mode / 部署方式
+# systemd 服务（默认，开机自启 + journalctl）或手动运行（Alpine 等无 systemd 系统）
+DEPLOY_MODE="${XRAY_LITE_DEPLOY:-}"
+
+for arg in "$@"; do
+    case "$arg" in
+        --systemd) DEPLOY_MODE="systemd" ;;
+        --manual)  DEPLOY_MODE="manual" ;;
+        -h|--help)
+            echo "Usage / 用法: bash install.sh [--systemd|--manual]"
+            echo "  --systemd   安装为 systemd 服务 / install as a systemd service"
+            echo "  --manual    手动运行模式 / manual run mode (run.sh + nohup)"
+            echo "  也可用环境变量 / or env: XRAY_LITE_DEPLOY=systemd|manual"
+            exit 0
+            ;;
+        *)
+            echo -e "${RED}Unknown option / 未知选项: $arg${NC}"
+            exit 1
+            ;;
+    esac
+done
+
+case "$DEPLOY_MODE" in
+    ""|systemd|manual) ;;
+    *)
+        echo -e "${RED}XRAY_LITE_DEPLOY must be systemd or manual / 只能为 systemd 或 manual${NC}"
+        exit 1
+        ;;
+esac
+
+SYSTEMD_AVAILABLE="n"
+if command -v systemctl >/dev/null 2>&1; then
+    SYSTEMD_AVAILABLE="y"
+fi
+
+# 明确要了 systemd 但系统没有，只能用手动模式
+if [ "$DEPLOY_MODE" = "systemd" ] && [ "$SYSTEMD_AVAILABLE" != "y" ]; then
+    echo -e "${RED}systemctl not found, falling back to manual mode / 未找到 systemctl，改用手动运行模式${NC}"
+    DEPLOY_MODE="manual"
+fi
+
+if [ -z "$DEPLOY_MODE" ]; then
+    if [ "$SYSTEMD_AVAILABLE" = "y" ] && [ -t 0 ]; then
+        echo -e "${YELLOW}Deployment / 部署方式:${NC}"
+        echo "  1) systemd service (默认 default) — 开机自启，日志走 journalctl"
+        echo "  2) manual run — 手动运行，用 $INSTALL_DIR/run.sh 管理，日志写文件"
+        read -p "Choice / 选择 [1]: " MODE_INPUT
+        case "${MODE_INPUT:-1}" in
+            2|m|manual) DEPLOY_MODE="manual" ;;
+            *) DEPLOY_MODE="systemd" ;;
+        esac
+    elif [ "$SYSTEMD_AVAILABLE" = "y" ]; then
+        DEPLOY_MODE="systemd"
+    else
+        DEPLOY_MODE="manual"
+        echo -e "${YELLOW}未检测到 systemd，使用手动运行模式 / No systemd found, using manual mode${NC}"
+    fi
+fi
+
+if [ "$DEPLOY_MODE" = "systemd" ]; then
+    echo -e "${GREEN}✓ Deployment / 部署方式: systemd service${NC}"
+else
+    echo -e "${GREEN}✓ Deployment / 部署方式: manual run (run.sh + nohup)${NC}"
+fi
 echo ""
 
 # Download binary / 下载二进制文件
@@ -407,10 +482,11 @@ chmod 755 $INSTALL_DIR
 chmod 644 $INSTALL_DIR/config.json
 chmod 755 $INSTALL_DIR/vless-server
 
-# Install systemd service
-echo -e "${YELLOW}[5/6] Installing systemd service... / 安装 systemd 服务...${NC}"
+# Install service / 安装服务
+if [ "$DEPLOY_MODE" = "systemd" ]; then
+    echo -e "${YELLOW}[5/6] Installing systemd service... / 安装 systemd 服务...${NC}"
 
-cat > /etc/systemd/system/xray-lite.service << EOF
+    cat > /etc/systemd/system/xray-lite.service << EOF
 [Unit]
 Description=Xray-Lite VLESS Reality Server
 After=network.target
@@ -438,15 +514,15 @@ StandardError=journal
 WantedBy=multi-user.target
 EOF
 
-systemctl daemon-reload >/dev/null 2>&1
-systemctl enable xray-lite >/dev/null 2>&1
-echo -e "${GREEN}✓ Service installed / 服务已安装${NC}"
-echo ""
+    systemctl daemon-reload >/dev/null 2>&1
+    systemctl enable xray-lite >/dev/null 2>&1
+    echo -e "${GREEN}✓ Service installed / 服务已安装${NC}"
+    echo ""
 
-# Configure journald log rotation for xray-lite / 配置 journald 日志轮转
-echo -e "${YELLOW}Configuring log rotation... / 配置日志轮转...${NC}"
-mkdir -p /etc/systemd/journald.conf.d
-cat > /etc/systemd/journald.conf.d/xray-lite.conf << EOF
+    # Configure journald log rotation for xray-lite / 配置 journald 日志轮转
+    echo -e "${YELLOW}Configuring log rotation... / 配置日志轮转...${NC}"
+    mkdir -p /etc/systemd/journald.conf.d
+    cat > /etc/systemd/journald.conf.d/xray-lite.conf << EOF
 # Xray-Lite journald log rotation configuration
 # Xray-Lite journald 日志轮转配置
 [Journal]
@@ -460,10 +536,98 @@ MaxRetentionSec=7day
 Compress=yes
 EOF
 
-# Restart journald to apply configuration / 重启 journald 应用配置
-systemctl restart systemd-journald >/dev/null 2>&1
-echo -e "${GREEN}✓ Log rotation configured (max 50MB, 7 days) / 日志轮转已配置 (最大 50MB, 7天)${NC}"
-echo ""
+    # Restart journald to apply configuration / 重启 journald 应用配置
+    systemctl restart systemd-journald >/dev/null 2>&1
+    echo -e "${GREEN}✓ Log rotation configured (max 50MB, 7 days) / 日志轮转已配置 (最大 50MB, 7天)${NC}"
+    echo ""
+else
+    echo -e "${YELLOW}[5/6] Setting up manual run script... / 配置手动运行脚本...${NC}"
+
+    cat > "$INSTALL_DIR/run.sh" << 'EOF'
+#!/bin/sh
+# Xray-Lite manual run script / Xray-Lite 手动运行脚本
+# 无 systemd 的系统（如 Alpine）用它管理进程 / manages the process on systems without systemd
+# Usage: ./run.sh {start|stop|restart|status|log}
+
+DIR="/opt/xray-lite"
+BIN="$DIR/vless-server"
+CONF="$DIR/config.json"
+PIDFILE="$DIR/xray-lite.pid"
+LOGFILE="$DIR/xray-lite.log"
+# 单文件日志上限 10MB，超过则在下次启动时轮转为 xray-lite.log.1
+MAXLOG=10485760
+
+is_running() {
+    [ -f "$PIDFILE" ] || return 1
+    PID=$(cat "$PIDFILE" 2>/dev/null)
+    [ -n "$PID" ] || return 1
+    kill -0 "$PID" 2>/dev/null
+}
+
+case "$1" in
+    start)
+        if is_running; then
+            echo "已在运行 / already running (pid $PID)"
+            exit 0
+        fi
+        if [ -f "$LOGFILE" ] && [ "$(wc -c < "$LOGFILE")" -gt "$MAXLOG" ]; then
+            mv "$LOGFILE" "$LOGFILE.1"
+        fi
+        cd "$DIR" || exit 1
+        RUST_LOG=info nohup "$BIN" --config "$CONF" >> "$LOGFILE" 2>&1 &
+        echo $! > "$PIDFILE"
+        sleep 1
+        if is_running; then
+            echo "已启动 / started (pid $(cat "$PIDFILE"))"
+        else
+            echo "启动失败 / failed to start, 日志 / log: $LOGFILE"
+            tail -n 20 "$LOGFILE"
+            rm -f "$PIDFILE"
+            exit 1
+        fi
+        ;;
+    stop)
+        if ! is_running; then
+            echo "未在运行 / not running"
+            rm -f "$PIDFILE"
+            exit 0
+        fi
+        kill "$PID" 2>/dev/null
+        for _ in 1 2 3 4 5; do
+            kill -0 "$PID" 2>/dev/null || break
+            sleep 1
+        done
+        kill -0 "$PID" 2>/dev/null && kill -9 "$PID" 2>/dev/null
+        rm -f "$PIDFILE"
+        echo "已停止 / stopped"
+        ;;
+    restart)
+        "$DIR/run.sh" stop
+        "$DIR/run.sh" start
+        ;;
+    status)
+        if is_running; then
+            echo "运行中 / running (pid $PID)"
+        else
+            echo "未运行 / stopped"
+            exit 1
+        fi
+        ;;
+    log)
+        tail -f "$LOGFILE"
+        ;;
+    *)
+        echo "Usage: $0 {start|stop|restart|status|log}"
+        exit 1
+        ;;
+esac
+EOF
+
+    chmod 755 "$INSTALL_DIR/run.sh"
+    echo -e "${GREEN}✓ Manual run script installed / 手动运行脚本已安装: $INSTALL_DIR/run.sh${NC}"
+    echo -e "${GREEN}✓ Log file / 日志文件: $INSTALL_DIR/xray-lite.log (超 10MB 下次启动时轮转)${NC}"
+    echo ""
+fi
 
 # Configure firewall
 echo -e "${YELLOW}[6/6] Configuring firewall... / 配置防火墙...${NC}"
@@ -489,36 +653,55 @@ else
 fi
 echo ""
 
-# Check port availability
-if lsof -i:$PORT -t >/dev/null 2>&1 ; then
+# Check port availability / 检查端口占用
+# busybox 环境（Alpine）可能既没有 lsof 也没有 ss，用哪个算哪个
+port_in_use() {
+    if command -v lsof >/dev/null 2>&1; then
+        lsof -i:"$1" -t >/dev/null 2>&1 && return 0
+    fi
+    if command -v ss >/dev/null 2>&1; then
+        ss -tuln | grep -q ":$1 " && return 0
+    fi
+    return 1
+}
+
+if port_in_use "$PORT"; then
     echo "Port $PORT is in use, attempting to clean up... / 端口 $PORT 被占用，尝试清理..."
-    systemctl stop xray-lite >/dev/null 2>&1 || true
+    if [ "$SYSTEMD_AVAILABLE" = "y" ]; then
+        systemctl stop xray-lite >/dev/null 2>&1 || true
+    fi
     pkill -f vless-server || true
     sleep 2
 fi
 
-if lsof -i:$PORT -t >/dev/null 2>&1 ; then
-    echo -e "${RED}Error: Port $PORT is already in use! / 错误: 端口 $PORT 已被占用!${NC}"
-    exit 1
-fi
-if ss -tuln | grep -q ":$PORT " ; then
+if port_in_use "$PORT"; then
     echo -e "${RED}Error: Port $PORT is already in use! / 错误: 端口 $PORT 已被占用!${NC}"
     exit 1
 fi
 
 # Start service
-echo -e "${YELLOW}Starting Xray-Lite service... / 启动 Xray-Lite 服务...${NC}"
-systemctl start xray-lite
-sleep 2
+echo -e "${YELLOW}Starting Xray-Lite... / 启动 Xray-Lite...${NC}"
 
-if systemctl is-active --quiet xray-lite; then
-    echo -e "${GREEN}✓ Service started successfully / 服务启动成功${NC}"
+if [ "$DEPLOY_MODE" = "systemd" ]; then
+    systemctl start xray-lite
+    sleep 2
+
+    if systemctl is-active --quiet xray-lite; then
+        echo -e "${GREEN}✓ Service started successfully / 服务启动成功${NC}"
+    else
+        echo -e "${RED}✗ Service failed to start / 服务启动失败${NC}"
+        echo -e "${YELLOW}=== Error Logs / 错误日志 ===${NC}"
+        journalctl -u xray-lite -n 20 --no-pager
+        echo -e "${YELLOW}=============================${NC}"
+        exit 1
+    fi
 else
-    echo -e "${RED}✗ Service failed to start / 服务启动失败${NC}"
-    echo -e "${YELLOW}=== Error Logs / 错误日志 ===${NC}"
-    journalctl -u xray-lite -n 20 --no-pager
-    echo -e "${YELLOW}=============================${NC}"
-    exit 1
+    if "$INSTALL_DIR/run.sh" start; then
+        echo -e "${GREEN}✓ Started successfully / 启动成功${NC}"
+    else
+        echo -e "${RED}✗ Failed to start / 启动失败${NC}"
+        exit 1
+    fi
 fi
 echo ""
 
@@ -540,11 +723,22 @@ echo "  Xray 客户端:                     $INSTALL_DIR/client-config.json"
 echo "  Download / 下载: scp root@$SERVER_IP:$INSTALL_DIR/clash-verge.yaml ."
 echo ""
 echo -e "${BLUE}Service Management / 服务管理:${NC}"
-echo "  Start / 启动:   systemctl start xray-lite"
-echo "  Stop / 停止:    systemctl stop xray-lite"
-echo "  Restart / 重启: systemctl restart xray-lite"
-echo "  Status / 状态:  systemctl status xray-lite"
-echo "  Logs / 日志:    journalctl -u xray-lite -f"
+if [ "$DEPLOY_MODE" = "systemd" ]; then
+    echo "  Start / 启动:   systemctl start xray-lite"
+    echo "  Stop / 停止:    systemctl stop xray-lite"
+    echo "  Restart / 重启: systemctl restart xray-lite"
+    echo "  Status / 状态:  systemctl status xray-lite"
+    echo "  Logs / 日志:    journalctl -u xray-lite -f"
+else
+    echo "  Start / 启动:   $INSTALL_DIR/run.sh start"
+    echo "  Stop / 停止:    $INSTALL_DIR/run.sh stop"
+    echo "  Restart / 重启: $INSTALL_DIR/run.sh restart"
+    echo "  Status / 状态:  $INSTALL_DIR/run.sh status"
+    echo "  Logs / 日志:    $INSTALL_DIR/run.sh log   (或直接看 $INSTALL_DIR/xray-lite.log)"
+    echo ""
+    echo -e "${YELLOW}手动运行模式不会开机自启 / manual mode does not auto-start on boot${NC}"
+    echo -e "${YELLOW}Alpine: 把 $INSTALL_DIR/run.sh start 写进 /etc/local.d/xray-lite.start，再执行 rc-update add local default${NC}"
+fi
 echo ""
 echo -e "${BLUE}Uninstall / 卸载:${NC}"
 echo "  bash <(curl -fsSL https://raw.githubusercontent.com/dongjiahong/xray-lite/main/uninstall.sh)"
