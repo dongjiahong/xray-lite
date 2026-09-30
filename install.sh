@@ -31,6 +31,9 @@ NC='\033[0m'
 VERSION="v0.4.7"
 REPO="dongjiahong/xray-lite"
 
+# Installation directory / 安装目录
+INSTALL_DIR="/opt/xray-lite"
+
 echo -e "${BLUE}=========================================${NC}"
 echo -e "${BLUE}  Xray-Lite One-Click Installation${NC}"
 echo -e "${BLUE}  Xray-Lite 一键安装${NC}"
@@ -71,29 +74,8 @@ else
 fi
 echo ""
 
-# Stop existing service / 停止现有服务
-echo -e "${YELLOW}Checking for existing installation... / 检查现有安装...${NC}"
-if [ "$SYSTEMD_AVAILABLE" = "y" ] && systemctl is-active --quiet xray-lite; then
-    echo "Stopping existing xray-lite service... / 停止现有 xray-lite 服务..."
-    systemctl stop xray-lite >/dev/null 2>&1
-    systemctl disable xray-lite >/dev/null 2>&1
-fi
-
-# Kill any lingering vless-server processes (covers manual mode)
-pkill -f vless-server || true
-
-echo ""
-
-# Create installation directory / 创建安装目录
-INSTALL_DIR="/opt/xray-lite"
-echo -e "${YELLOW}[1/6] Creating installation directory... / 创建安装目录...${NC}"
-mkdir -p $INSTALL_DIR
-cd $INSTALL_DIR
-echo -e "${GREEN}✓ Directory created / 目录已创建: $INSTALL_DIR${NC}"
-echo ""
-
-# Deployment mode / 部署方式
-# systemd 服务（默认，开机自启 + journalctl）或手动运行（Alpine 等无 systemd 系统）
+# Deployment mode: options and detection / 部署方式：参数与环境检测
+# 必须在停止旧服务之前确定，否则不知道要不要碰 systemd
 DEPLOY_MODE="${XRAY_LITE_DEPLOY:-}"
 
 for arg in "$@"; do
@@ -133,6 +115,46 @@ if [ "$DEPLOY_MODE" = "systemd" ] && [ "$SYSTEMD_AVAILABLE" != "y" ]; then
     DEPLOY_MODE="manual"
 fi
 
+# 停掉上一次安装留下的进程 / stop leftovers from a previous install
+# Alpine 等精简系统上 pkill / killall 未必存在，能试的都试一遍
+stop_existing_process() {
+    local pid
+    if [ -f "$INSTALL_DIR/xray-lite.pid" ]; then
+        pid=$(cat "$INSTALL_DIR/xray-lite.pid" 2>/dev/null || true)
+        if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+            kill "$pid" 2>/dev/null || true
+        fi
+        rm -f "$INSTALL_DIR/xray-lite.pid"
+    fi
+    if command -v pkill >/dev/null 2>&1; then
+        pkill -f "vless-server" 2>/dev/null || true
+    fi
+    if command -v killall >/dev/null 2>&1; then
+        killall vless-server 2>/dev/null || true
+    fi
+}
+
+# Stop existing service / 停止现有服务
+echo -e "${YELLOW}Checking for existing installation... / 检查现有安装...${NC}"
+if [ "$SYSTEMD_AVAILABLE" = "y" ] && systemctl is-active --quiet xray-lite; then
+    echo "Stopping existing xray-lite service... / 停止现有 xray-lite 服务..."
+    systemctl stop xray-lite >/dev/null 2>&1
+    systemctl disable xray-lite >/dev/null 2>&1
+fi
+
+# Kill any lingering vless-server processes (covers manual mode)
+stop_existing_process
+
+echo ""
+
+# Create installation directory / 创建安装目录
+echo -e "${YELLOW}[1/6] Creating installation directory... / 创建安装目录...${NC}"
+mkdir -p $INSTALL_DIR
+cd $INSTALL_DIR
+echo -e "${GREEN}✓ Directory created / 目录已创建: $INSTALL_DIR${NC}"
+echo ""
+
+# Deployment mode: ask when not specified / 未指定时交互选择部署方式
 if [ -z "$DEPLOY_MODE" ]; then
     if [ "$SYSTEMD_AVAILABLE" = "y" ] && [ -t 0 ]; then
         echo -e "${YELLOW}Deployment / 部署方式:${NC}"
@@ -654,15 +676,21 @@ fi
 echo ""
 
 # Check port availability / 检查端口占用
-# busybox 环境（Alpine）可能既没有 lsof 也没有 ss，用哪个算哪个
-port_in_use() {
-    if command -v lsof >/dev/null 2>&1; then
-        lsof -i:"$1" -t >/dev/null 2>&1 && return 0
-    fi
+# 只看 LISTEN：lsof -i 会把 TIME_WAIT / ESTABLISHED 的旧连接也算成占用，会误判
+# busybox 环境（Alpine）可能既没有 ss 也没有 lsof，用 netstat 兜底
+port_holder() {
     if command -v ss >/dev/null 2>&1; then
-        ss -tuln | grep -q ":$1 " && return 0
+        ss -ltnp 2>/dev/null | grep -E "[:.]$1[[:space:]]" || true
+    elif command -v netstat >/dev/null 2>&1; then
+        netstat -ltnp 2>/dev/null | grep -E "[:.]$1[[:space:]]" ||
+        netstat -ltn 2>/dev/null | grep -E "[:.]$1[[:space:]]" || true
+    elif command -v lsof >/dev/null 2>&1; then
+        lsof -nP -iTCP:"$1" -sTCP:LISTEN 2>/dev/null || true
     fi
-    return 1
+}
+
+port_in_use() {
+    [ -n "$(port_holder "$1")" ]
 }
 
 if port_in_use "$PORT"; then
@@ -670,12 +698,23 @@ if port_in_use "$PORT"; then
     if [ "$SYSTEMD_AVAILABLE" = "y" ]; then
         systemctl stop xray-lite >/dev/null 2>&1 || true
     fi
-    pkill -f vless-server || true
-    sleep 2
+    stop_existing_process
+    # 旧进程退出后端口才释放，等一会儿再判断 / give the old process time to release the port
+    for _ in 1 2 3 4 5; do
+        port_in_use "$PORT" || break
+        sleep 1
+    done
 fi
 
 if port_in_use "$PORT"; then
     echo -e "${RED}Error: Port $PORT is already in use! / 错误: 端口 $PORT 已被占用!${NC}"
+    echo -e "${YELLOW}占用者 / held by:${NC}"
+    port_holder "$PORT"
+    echo ""
+    echo -e "${YELLOW}处理办法 / what to do:${NC}"
+    echo "  1. 停掉上面的进程；Alpine 上没有 pkill 时 / if pkill is missing on Alpine:"
+    echo "     kill \$(pidof vless-server)      # 或 apk add procps 后用 pkill -f vless-server"
+    echo "  2. 或者换一个端口重新运行安装脚本 / or reinstall with another port"
     exit 1
 fi
 
