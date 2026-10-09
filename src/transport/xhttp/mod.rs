@@ -48,4 +48,7 @@ pub struct XhttpConfig {
     pub path: String,
     /// Host 头
     pub host: String,
+    /// 内存/资源相关参数
+    #[serde(default)]
+    pub performance: crate::config::PerformanceConfig,
 }

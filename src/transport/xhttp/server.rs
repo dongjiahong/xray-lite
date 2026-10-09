@@ -73,6 +73,7 @@ mod tests {
             mode: XhttpMode::StreamUp,
             path: "/".to_string(),
             host: "www.example.com".to_string(),
+            performance: Default::default(),
         };
 
         let server = XhttpServer::new(config);
@@ -89,6 +90,7 @@ mod tests {
             mode: XhttpMode::StreamUp,
             path: "".to_string(),
             host: "www.example.com".to_string(),
+            performance: Default::default(),
         };
         let server = XhttpServer::new(config);
         assert!(server.is_err());

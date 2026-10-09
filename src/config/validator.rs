@@ -22,6 +22,40 @@ impl Validator {
             return Err(anyhow!("至少需要一个出站配置"));
         }
 
+        Self::validate_performance(&config.performance)?;
+
+        Ok(())
+    }
+
+    pub(super) fn validate_performance(p: &super::PerformanceConfig) -> Result<()> {
+        // h2 协议规定窗口不超过 2^31-1 字节，初始值 64KiB
+        const MAX_WINDOW_KB: u32 = 2 * 1024 * 1024 - 1;
+
+        if p.max_connections == 0 {
+            return Err(anyhow!("performance.maxConnections 必须大于 0"));
+        }
+        if p.h2_max_concurrent_streams == 0 {
+            return Err(anyhow!("performance.h2MaxConcurrentStreams 必须大于 0"));
+        }
+        for (name, v) in [
+            ("h2StreamWindowKb", p.h2_stream_window_kb),
+            ("h2ConnectionWindowKb", p.h2_connection_window_kb),
+        ] {
+            if !(64..=MAX_WINDOW_KB).contains(&v) {
+                return Err(anyhow!("performance.{} 必须在 64 到 {} 之间", name, MAX_WINDOW_KB));
+            }
+        }
+        // 发送缓冲小于一个 H2 帧(16KiB)会导致下载无法前进
+        if p.h2_send_buffer_kb < 32 {
+            return Err(anyhow!("performance.h2SendBufferKb 不能小于 32"));
+        }
+        if p.pipe_buffer_kb < 16 {
+            return Err(anyhow!("performance.pipeBufferKb 不能小于 16"));
+        }
+        // 发给 UDP 的单个包最大 16KiB，缓冲区至少要容得下
+        if p.udp_socket_buffer_kb < 32 {
+            return Err(anyhow!("performance.udpSocketBufferKb 不能小于 32"));
+        }
         Ok(())
     }
 
@@ -138,6 +172,7 @@ mod tests {
                 settings: None,
             }],
             routing: RoutingConfig::default(),
+            performance: PerformanceConfig::default(),
         };
 
         assert!(Validator::validate(&config).is_ok());
@@ -173,6 +208,7 @@ mod tests {
                 settings: None,
             }],
             routing: RoutingConfig::default(),
+            performance: PerformanceConfig::default(),
         };
 
         assert!(Validator::validate(&config).is_err());

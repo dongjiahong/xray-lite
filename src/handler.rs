@@ -11,6 +11,7 @@ pub async fn serve_vless(
     connection_manager: ConnectionManager,
     sniffing_enabled: bool,
     tcp_no_delay: bool,
+    udp_socket_buffer: usize,
 ) -> Result<()> {
     // 读取 VLESS 请求（带超时，支持多次读取）
     // Optimize: 增大缓冲区至 16KB 以减少系统调用，提升高吞吐场景性能
@@ -144,7 +145,6 @@ pub async fn serve_vless(
         Command::Udp => {
             info!("📡 UDP 请求: {}", request.address.to_string());
             
-            // Optimize: Create UDP socket with large buffers for QUIC/Video
             let std_socket = match std::net::UdpSocket::bind("0.0.0.0:0") {
                 Ok(s) => s,
                 Err(e) => {
@@ -153,10 +153,10 @@ pub async fn serve_vless(
                 }
             };
             
-            // Set socket buffers to 4MB to handle video bursts
+            // 缓冲大小由 performance.udpSocketBufferKb 决定，内核会按这个值分配每个 socket 的收发队列
             let socket = socket2::Socket::from(std_socket);
-            let _ = socket.set_recv_buffer_size(4 * 1024 * 1024);
-            let _ = socket.set_send_buffer_size(4 * 1024 * 1024);
+            let _ = socket.set_recv_buffer_size(udp_socket_buffer);
+            let _ = socket.set_send_buffer_size(udp_socket_buffer);
             
             // Convert back to Tokio socket
             let udp_socket = tokio::net::UdpSocket::from_std(socket.into())?;

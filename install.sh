@@ -28,7 +28,7 @@ BLUE='\033[0;34m'
 NC='\033[0m'
 
 # Version / 版本
-VERSION="v0.4.7"
+VERSION="v0.4.8"
 REPO="dongjiahong/xray-lite"
 
 # Installation directory / 安装目录
@@ -310,6 +310,67 @@ else
     XHTTP_SETTINGS=""
 fi
 
+# Resource profile / 资源档位
+# 按可用内存挑一组 performance 参数，避免小内存机器在大流量下被 OOM 杀掉。
+# 容器里 /proc/meminfo 显示的是宿主机内存，所以优先取 cgroup 限制（取两者较小值）。
+# 可用 XRAY_LITE_MEM_PROFILE=64|128|256|512|1024 手动指定档位。
+detect_memory_mb() {
+    local total_kb total_mb=0 limit v f
+    total_kb=$(awk '/^MemTotal:/ {print $2}' /proc/meminfo 2>/dev/null || true)
+    [ -n "$total_kb" ] && total_mb=$((total_kb / 1024))
+    for f in /sys/fs/cgroup/memory.max /sys/fs/cgroup/memory/memory.limit_in_bytes; do
+        [ -r "$f" ] || continue
+        v=$(cat "$f" 2>/dev/null || true)
+        case "$v" in
+            ''|*[!0-9]*) continue ;;
+        esac
+        limit=$((v / 1024 / 1024))
+        if [ "$total_mb" -eq 0 ] || [ "$limit" -lt "$total_mb" ]; then
+            total_mb=$limit
+        fi
+        break
+    done
+    echo "$total_mb"
+}
+
+MEM_PROFILE="${XRAY_LITE_MEM_PROFILE:-}"
+MEM_MB=$(detect_memory_mb)
+if [ -z "$MEM_PROFILE" ]; then
+    if [ "$MEM_MB" -le 0 ]; then MEM_PROFILE=256
+    elif [ "$MEM_MB" -le 96 ]; then MEM_PROFILE=64
+    elif [ "$MEM_MB" -le 192 ]; then MEM_PROFILE=128
+    elif [ "$MEM_MB" -le 384 ]; then MEM_PROFILE=256
+    elif [ "$MEM_MB" -le 768 ]; then MEM_PROFILE=512
+    else MEM_PROFILE=1024
+    fi
+fi
+
+# 参数含义见 README 的 Memory Tuning 一节
+case "$MEM_PROFILE" in
+    64)   P_WORKERS=1; P_CONNS=256;  P_SWIN=256;  P_CWIN=512;   P_STREAMS=32;  P_SEND=64;   P_PIPE=64;   P_UDP=64 ;;
+    128)  P_WORKERS=2; P_CONNS=512;  P_SWIN=512;  P_CWIN=2048;  P_STREAMS=64;  P_SEND=128;  P_PIPE=128;  P_UDP=128 ;;
+    256)  P_WORKERS=2; P_CONNS=1024; P_SWIN=1024; P_CWIN=4096;  P_STREAMS=100; P_SEND=256;  P_PIPE=256;  P_UDP=256 ;;
+    512)  P_WORKERS=0; P_CONNS=4096; P_SWIN=2048; P_CWIN=8192;  P_STREAMS=128; P_SEND=512;  P_PIPE=512;  P_UDP=512 ;;
+    1024) P_WORKERS=0; P_CONNS=8192; P_SWIN=4096; P_CWIN=16384; P_STREAMS=256; P_SEND=1024; P_PIPE=1024; P_UDP=1024 ;;
+    *)
+        echo -e "${RED}Unknown XRAY_LITE_MEM_PROFILE=$MEM_PROFILE (use 64|128|256|512|1024) / 无效的内存档位${NC}"
+        exit 1
+        ;;
+esac
+echo -e "${GREEN}✓ Memory / 内存: ${MEM_MB}MB -> profile / 档位: ${MEM_PROFILE}${NC}"
+
+PERFORMANCE_SETTINGS=",
+  \"performance\": {
+    \"workerThreads\": $P_WORKERS,
+    \"maxConnections\": $P_CONNS,
+    \"h2StreamWindowKb\": $P_SWIN,
+    \"h2ConnectionWindowKb\": $P_CWIN,
+    \"h2MaxConcurrentStreams\": $P_STREAMS,
+    \"h2SendBufferKb\": $P_SEND,
+    \"pipeBufferKb\": $P_PIPE,
+    \"udpSocketBufferKb\": $P_UDP
+  }"
+
 cat > config.json << EOF
 {
   "log": {
@@ -355,7 +416,7 @@ cat > config.json << EOF
   }],
   "routing": {
     "rules": []
-  }
+  }$PERFORMANCE_SETTINGS
 }
 EOF
 
@@ -596,7 +657,8 @@ case "$1" in
             mv "$LOGFILE" "$LOGFILE.1"
         fi
         cd "$DIR" || exit 1
-        RUST_LOG=info nohup "$BIN" --config "$CONF" >> "$LOGFILE" 2>&1 &
+        # 经 _supervise 启动：进程被 OOM 杀掉或崩溃后会自动拉起
+        nohup "$DIR/run.sh" _supervise >> "$LOGFILE" 2>&1 &
         echo $! > "$PIDFILE"
         sleep 1
         if is_running; then
@@ -619,9 +681,33 @@ case "$1" in
             kill -0 "$PID" 2>/dev/null || break
             sleep 1
         done
-        kill -0 "$PID" 2>/dev/null && kill -9 "$PID" 2>/dev/null
+        if kill -0 "$PID" 2>/dev/null; then
+            kill -9 "$PID" 2>/dev/null
+            pkill -x vless-server 2>/dev/null
+        fi
         rm -f "$PIDFILE"
         echo "已停止 / stopped"
+        ;;
+    _supervise)
+        # 内部命令：守护 vless-server，退出后 3 秒重启
+        trap 'kill "$CHILD" 2>/dev/null; exit 0' TERM INT
+        while :; do
+            START_AT=$(date +%s)
+            RUST_LOG=info "$BIN" --config "$CONF" &
+            CHILD=$!
+            wait "$CHILD"
+            RC=$?
+            echo "$(date '+%F %T') vless-server 退出 / exited (code $RC)"
+            # 刚启动就退出一般是配置或端口问题，重启也没用，直接放弃
+            if [ $(( $(date +%s) - START_AT )) -lt 3 ]; then
+                echo "启动后立即退出，不再重启 / exited right after start, giving up"
+                exit 1
+            fi
+            echo "3 秒后重启 / restarting in 3s"
+            sleep 3 &
+            CHILD=$!
+            wait "$CHILD"
+        done
         ;;
     restart)
         "$DIR/run.sh" stop

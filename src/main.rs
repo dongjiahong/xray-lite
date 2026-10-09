@@ -30,8 +30,15 @@ struct Args {
     log_level: String,
 }
 
-#[tokio::main]
-async fn main() -> Result<()> {
+// jemalloc 默认每核 4 个 arena，核数多的小内存容器里碎片会很可观；
+// 同时让空闲页尽快还给系统，避免在 cgroup 内存上限下 RSS 居高不下。
+#[cfg(not(target_os = "windows"))]
+#[export_name = "_rjem_malloc_conf"]
+pub static MALLOC_CONF: Option<&'static libc::c_char> = Some(unsafe {
+    &*(b"narenas:4,dirty_decay_ms:1000,muzzy_decay_ms:0\0".as_ptr() as *const libc::c_char)
+});
+
+fn main() -> Result<()> {
     // 提高文件句柄限制 (Linux)
     #[cfg(not(target_os = "windows"))]
     {
@@ -69,19 +76,27 @@ async fn main() -> Result<()> {
         .with_thread_ids(true)
         .init();
 
-    info!("🚀 Xray-Lite Server v0.4.6-stable [Manual Relay]");
+    info!("🚀 Xray-Lite Server v{} [Manual Relay]", env!("CARGO_PKG_VERSION"));
     info!("📄 Loading config from: {}", args.config);
 
     // 1. Load config
     let config = Config::load(&args.config)?;
     info!("✅ Configuration loaded successfully");
 
-    // 2. Initialize and run server
-    let server = Server::new(config)?;
-    info!("🌐 Server initialized");
+    // 线程数要在建运行时之前就知道，所以配置在这里加载而不是在 async 里
+    let mut runtime = tokio::runtime::Builder::new_multi_thread();
+    runtime.enable_all();
+    if config.performance.worker_threads > 0 {
+        runtime.worker_threads(config.performance.worker_threads);
+    }
+    info!("⚙️ 性能参数: {:?}", config.performance);
 
-    // 运行服务器
-    server.run().await?;
+    runtime.build()?.block_on(async move {
+        // 2. Initialize and run server
+        let server = Server::new(config)?;
+        info!("🌐 Server initialized");
 
-    Ok(())
+        // 运行服务器
+        server.run().await
+    })
 }

@@ -7,7 +7,7 @@ use tokio::net::{TcpListener, TcpStream};
 use tracing::{error, info, warn, debug};
 use uuid::Uuid;
 
-use crate::config::{Config, Inbound, Security};
+use crate::config::{Config, Inbound, PerformanceConfig, Security};
 use crate::network::ConnectionManager;
 use crate::protocol::vless::VlessCodec;
 use crate::transport::{RealityServer, XhttpServer};
@@ -39,9 +39,10 @@ impl Server {
         // 为每个入站配置启动监听器
         for inbound in self.config.inbounds.clone() {
             let connection_manager = self.connection_manager.clone();
+            let performance = self.config.performance.clone();
             
             let handle = tokio::spawn(async move {
-                if let Err(e) = Self::run_inbound(inbound, connection_manager).await {
+                if let Err(e) = Self::run_inbound(inbound, connection_manager, performance).await {
                     error!("入站处理失败: {}", e);
                 }
             });
@@ -58,7 +59,11 @@ impl Server {
     }
 
     /// 运行单个入站配置
-    async fn run_inbound(inbound: Inbound, connection_manager: ConnectionManager) -> Result<()> {
+    async fn run_inbound(
+        inbound: Inbound,
+        connection_manager: ConnectionManager,
+        performance: PerformanceConfig,
+    ) -> Result<()> {
         let addr = format!("{}:{}", inbound.listen, inbound.port);
         let sockopt = &inbound.stream_settings.sockopt;
         
@@ -171,6 +176,7 @@ impl Server {
                 },
                 path: xhttp_settings.path.clone(),
                 host: xhttp_settings.host.clone(),
+                performance: performance.clone(),
             };
             Some(XhttpServer::new(xhttp_config)?)
         } else {
@@ -178,10 +184,11 @@ impl Server {
         };
 
         // 连接数限制 (防止 OOM)
-        const MAX_CONNECTIONS: usize = 10000;
-        let connection_semaphore = std::sync::Arc::new(tokio::sync::Semaphore::new(MAX_CONNECTIONS));
+        let max_connections = performance.max_connections;
+        let connection_semaphore = std::sync::Arc::new(tokio::sync::Semaphore::new(max_connections));
+        let udp_socket_buffer = performance.udp_socket_buffer_kb * 1024;
         
-        info!("🔒 最大并发连接数: {}", MAX_CONNECTIONS);
+        info!("🔒 最大并发连接数: {}", max_connections);
 
         // 接受连接循环
         loop {
@@ -221,7 +228,7 @@ impl Server {
                         let _permit = permit;
                         
                         if let Err(e) =
-                            Self::handle_client(stream, codec, reality_server, _xhttp_server, connection_manager, sniffing_enabled, tcp_no_delay, accept_proxy_protocol)
+                            Self::handle_client(stream, codec, reality_server, _xhttp_server, connection_manager, sniffing_enabled, tcp_no_delay, accept_proxy_protocol, udp_socket_buffer)
                                 .await
                         {
                             error!("客户端处理失败: {}", e);
@@ -254,6 +261,7 @@ impl Server {
         sniffing_enabled: bool,
         tcp_no_delay: bool,
         accept_proxy_protocol: bool,
+        udp_socket_buffer: usize,
     ) -> Result<()> {
         // 如果启用 Proxy Protocol，先解析获取真实客户端 IP
         let (stream, _real_client_addr): (Box<dyn AsyncStream>, Option<std::net::SocketAddr>) = if accept_proxy_protocol {
@@ -316,7 +324,7 @@ impl Server {
             let codec = codec_clone.clone();
             let connection_manager = connection_manager_clone.clone();
             async move {
-                serve_vless(stream, codec, connection_manager, sniffing_enabled, tcp_no_delay).await
+                serve_vless(stream, codec, connection_manager, sniffing_enabled, tcp_no_delay, udp_socket_buffer).await
             }
         };
 

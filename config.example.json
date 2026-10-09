@@ -52,5 +52,15 @@
     ],
     "routing": {
         "rules": []
+    },
+    "performance": {
+        "workerThreads": 2,
+        "maxConnections": 1024,
+        "h2StreamWindowKb": 1024,
+        "h2ConnectionWindowKb": 4096,
+        "h2MaxConcurrentStreams": 100,
+        "h2SendBufferKb": 256,
+        "pipeBufferKb": 256,
+        "udpSocketBufferKb": 256
     }
 }

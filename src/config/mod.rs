@@ -12,6 +12,46 @@ pub struct Config {
     pub outbounds: Vec<Outbound>,
     #[serde(default)]
     pub routing: RoutingConfig,
+    #[serde(default)]
+    pub performance: PerformanceConfig,
+}
+
+/// 资源占用相关配置。小内存机器调小，大内存机器调大。
+/// 所有 `*Kb` 字段单位均为 KiB。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct PerformanceConfig {
+    /// tokio 工作线程数，0 表示按 CPU 核数自动
+    pub worker_threads: usize,
+    /// 最大并发连接数
+    pub max_connections: usize,
+    /// XHTTP: 每个 H2 流的接收窗口
+    pub h2_stream_window_kb: u32,
+    /// XHTTP: 每个 H2 连接的接收窗口
+    pub h2_connection_window_kb: u32,
+    /// XHTTP: 单个 H2 连接上的最大并发流数
+    pub h2_max_concurrent_streams: u32,
+    /// XHTTP: 每个 H2 流允许在内存中排队等待发送的数据上限（下载方向）
+    pub h2_send_buffer_kb: usize,
+    /// XHTTP: 每个流内部 VLESS 管道的缓冲区大小
+    pub pipe_buffer_kb: usize,
+    /// UDP 转发时每个 socket 的收发缓冲区
+    pub udp_socket_buffer_kb: usize,
+}
+
+impl Default for PerformanceConfig {
+    fn default() -> Self {
+        Self {
+            worker_threads: 0,
+            max_connections: 4096,
+            h2_stream_window_kb: 1024,
+            h2_connection_window_kb: 4096,
+            h2_max_concurrent_streams: 128,
+            h2_send_buffer_kb: 256,
+            pipe_buffer_kb: 256,
+            udp_socket_buffer_kb: 256,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -273,5 +313,25 @@ mod tests {
         let config: Config = serde_json::from_str(json).unwrap();
         assert_eq!(config.inbounds.len(), 1);
         assert_eq!(config.outbounds.len(), 1);
+        // 不写 performance 时使用默认值
+        assert_eq!(config.performance.h2_send_buffer_kb, 256);
+    }
+
+    #[test]
+    fn test_performance_partial_override() {
+        let p: PerformanceConfig =
+            serde_json::from_str(r#"{"workerThreads": 1, "h2SendBufferKb": 64}"#).unwrap();
+        assert_eq!(p.worker_threads, 1);
+        assert_eq!(p.h2_send_buffer_kb, 64);
+        // 没写的字段保持默认
+        assert_eq!(p.max_connections, PerformanceConfig::default().max_connections);
+    }
+
+    #[test]
+    fn test_performance_validation() {
+        let mut p = PerformanceConfig::default();
+        assert!(Validator::validate_performance(&p).is_ok());
+        p.h2_send_buffer_kb = 8;
+        assert!(Validator::validate_performance(&p).is_err());
     }
 }

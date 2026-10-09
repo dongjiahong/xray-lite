@@ -50,6 +50,34 @@ Standard outbound for proxying traffic:
 }
 ```
 
+## Performance Object
+
+Optional top-level `performance` section controlling resource usage. All fields are optional; omitted ones use the defaults below. `*Kb` fields are in KiB. See the *Memory Tuning* section in the [README](../README.md) for recommended values per memory size (64M / 128M / 256M / 512M / 1G+).
+
+| Field | Default | Description |
+| :--- | :--- | :--- |
+| `workerThreads` | `0` | tokio worker threads. `0` = number of CPU cores. |
+| `maxConnections` | `4096` | Maximum concurrent connections. |
+| `h2StreamWindowKb` | `1024` | XHTTP: per-stream receive window (upload direction). 64 – 2097151. |
+| `h2ConnectionWindowKb` | `4096` | XHTTP: per-connection receive window. 64 – 2097151. |
+| `h2MaxConcurrentStreams` | `100` | XHTTP: max concurrent streams per H2 connection. |
+| `h2SendBufferKb` | `256` | XHTTP: max data queued in memory per stream for sending (download direction). Minimum 32. |
+| `pipeBufferKb` | `256` | XHTTP: per-stream internal VLESS pipe buffer. Minimum 16. |
+| `udpSocketBufferKb` | `256` | UDP relay: send/receive buffer per UDP session socket. Minimum 32. |
+
+```json
+"performance": {
+  "workerThreads": 1,
+  "maxConnections": 256,
+  "h2StreamWindowKb": 256,
+  "h2ConnectionWindowKb": 512,
+  "h2MaxConcurrentStreams": 32,
+  "h2SendBufferKb": 64,
+  "pipeBufferKb": 64,
+  "udpSocketBufferKb": 64
+}
+```
+
 ## XDP Environment Variables
 
 For the XDP Edition, additional parameters can be passed via command line or environment:

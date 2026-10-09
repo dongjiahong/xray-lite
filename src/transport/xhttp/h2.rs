@@ -13,11 +13,15 @@ use once_cell::sync::Lazy;
 use rand::{distributions::Alphanumeric, Rng};
 
 use super::XhttpConfig;
+use crate::config::PerformanceConfig;
 use dashmap::DashMap;
+
+/// 客户端停止接收数据超过这个时间就放弃该流，释放其缓冲
+const SEND_STALL_TIMEOUT: Duration = Duration::from_secs(300);
 
 /// 全局会话管理器
 struct Session {
-    to_vless_tx: mpsc::UnboundedSender<Bytes>,
+    to_vless_tx: mpsc::Sender<Bytes>,
     notify: Arc<Notify>,
     transferred_bytes: Arc<AtomicUsize>,
 }
@@ -82,12 +86,29 @@ impl H2Handler {
 
     /// 智能分片发送（流量整形/Shredder）
     /// 将大数据块切分成随机大小的小块发送，消除长度特征
-    fn send_split_data(src: &mut BytesMut, send_stream: &mut SendStream<Bytes>, counter: &Arc<std::sync::atomic::AtomicU64>) -> Result<()> {
-        let mut rng = rand::thread_rng();
-        
+    ///
+    /// 每块发送前必须先向 h2 申请发送容量并等待。h2 的 `send_data` 在窗口不足时
+    /// 不会阻塞而是无限缓冲，下载速度快于客户端接收速度时内存会持续增长直到 OOM。
+    /// 这里等不到容量就停止读取上游，反压会一路传回目标服务器的 TCP 连接。
+    async fn send_split_data(src: &mut BytesMut, send_stream: &mut SendStream<Bytes>, counter: &Arc<std::sync::atomic::AtomicU64>) -> Result<()> {
         while src.has_remaining() {
-            let chunk_size = rng.gen_range(8192..16384);
-            let split_len = std::cmp::min(src.len(), chunk_size);
+            // ThreadRng 不是 Send，不能跨 await 持有
+            let chunk_size = rand::thread_rng().gen_range(8192..16384);
+            let want = std::cmp::min(src.len(), chunk_size);
+
+            send_stream.reserve_capacity(want);
+            let mut granted = send_stream.capacity();
+            if granted == 0 {
+                granted = match tokio::time::timeout(
+                    SEND_STALL_TIMEOUT,
+                    Self::wait_send_capacity(send_stream),
+                ).await {
+                    Ok(res) => res?,
+                    Err(_) => return Err(anyhow::anyhow!("XHTTP: 客户端长时间不接收数据")),
+                };
+            }
+
+            let split_len = std::cmp::min(granted, want);
             
             // 累加流量计数
             counter.fetch_add(split_len as u64, Ordering::Relaxed);
@@ -98,6 +119,17 @@ impl H2Handler {
         Ok(())
     }
 
+    async fn wait_send_capacity(send_stream: &mut SendStream<Bytes>) -> Result<usize> {
+        loop {
+            match std::future::poll_fn(|cx| send_stream.poll_capacity(cx)).await {
+                Some(Ok(0)) => continue,
+                Some(Ok(n)) => return Ok(n),
+                Some(Err(e)) => return Err(e.into()),
+                None => return Err(anyhow::anyhow!("XHTTP: 流已被客户端关闭")),
+            }
+        }
+    }
+
     pub async fn handle<T, F, Fut>(&self, stream: T, handler: F) -> Result<()>
     where
         T: AsyncRead + AsyncWrite + Unpin + Send + 'static,
@@ -106,11 +138,13 @@ impl H2Handler {
     {
         info!("XHTTP: 启动 V41 拟态防御引擎 (Balanced Performance + Adaptive Memory)");
 
+        let perf = &self.config.performance;
         let mut builder = server::Builder::new();
         builder
-            .initial_window_size(4194304)    // 4MB 窗口
-            .initial_connection_window_size(8388608) // 8MB 连接窗口
-            .max_concurrent_streams(500)
+            .initial_window_size(perf.h2_stream_window_kb * 1024)
+            .initial_connection_window_size(perf.h2_connection_window_kb * 1024)
+            .max_concurrent_streams(perf.h2_max_concurrent_streams)
+            .max_send_buffer_size(perf.h2_send_buffer_kb * 1024)
             .max_frame_size(16384);
 
         // 使用 tokio::time::timeout 替代不存在的 handshake_timeout 方法
@@ -212,7 +246,7 @@ impl H2Handler {
         }
 
         if method == "GET" {
-            Self::handle_xhttp_get(path, respond, handler, traffic_counter).await?;
+            Self::handle_xhttp_get(path, respond, handler, traffic_counter, &config.performance).await?;
         } else if method == "POST" {
             let user_agent = request.headers().get("user-agent").and_then(|v| v.to_str().ok()).unwrap_or("");
             let is_pc = user_agent.contains("Go-http-client");
@@ -238,7 +272,7 @@ impl H2Handler {
             } else {
                 let content_type = request.headers().get("content-type").and_then(|v| v.to_str().ok()).unwrap_or("");
                 let is_grpc = content_type.contains("grpc");
-                Self::handle_standalone(request, respond, handler, is_grpc, traffic_counter).await?;
+                Self::handle_standalone(request, respond, handler, is_grpc, traffic_counter, &config.performance).await?;
             }
         }
  else {
@@ -253,6 +287,7 @@ impl H2Handler {
         handler: F,
         is_grpc: bool,
         traffic_counter: Arc<std::sync::atomic::AtomicU64>,
+        perf: &PerformanceConfig,
     ) -> Result<()>
     where
         F: Fn(Box<dyn crate::server::AsyncStream>) -> Fut + Clone + Send + 'static,
@@ -268,9 +303,7 @@ impl H2Handler {
             .unwrap();
 
         let mut send_stream = respond.send_response(response, false)?;
-        // 扩容核心：将内部管道从 64KB 扩大到 512KB (Zero-copy buffer)
-        // 彻底消除高带宽下载时的反向压力 (Backpressure)
-        let (client_io, server_io) = tokio::io::duplex(524288); // 512KB Buffer
+        let (client_io, server_io) = tokio::io::duplex(perf.pipe_buffer_kb * 1024);
         
         let use_grpc_framing = Arc::new(AtomicBool::new(is_grpc));
         let use_grpc_framing_up = use_grpc_framing.clone();
@@ -298,7 +331,6 @@ impl H2Handler {
                 let chunk = chunk?;
                 let len = chunk.len();
                 traffic_counter_up.fetch_add(len as u64, Ordering::Relaxed);
-                let _ = body.flow_control().release_capacity(len);
                 trace!("XHTTP UP: 收到 {} 字节原始数据", len);
                 
                 if first_chunk && use_grpc_framing_up.load(Ordering::Relaxed) {
@@ -333,6 +365,9 @@ impl H2Handler {
                 } else {
                     client_write.write_all(&chunk).await?;
                 }
+
+                // 数据写进管道后才归还窗口，管道满时客户端上传会被 h2 流控挡住
+                let _ = body.flow_control().release_capacity(len);
             }
             debug!("XHTTP UP: 请求体读取结束");
             Ok::<(), anyhow::Error>(())
@@ -363,10 +398,10 @@ impl H2Handler {
                     buf.advance(n);
 
                     // 整形发送 gRPC 帧
-                    Self::send_split_data(&mut frame, &mut send_stream, &traffic_counter_down)?;
+                    Self::send_split_data(&mut frame, &mut send_stream, &traffic_counter_down).await?;
                 } else {
                     // 整形发送普通数据流
-                    Self::send_split_data(&mut buf, &mut send_stream, &traffic_counter_down)?;
+                    Self::send_split_data(&mut buf, &mut send_stream, &traffic_counter_down).await?;
                 }
             }
             
@@ -397,12 +432,15 @@ impl H2Handler {
         mut respond: SendResponse<Bytes>,
         handler: F,
         traffic_counter: Arc<std::sync::atomic::AtomicU64>,
+        perf: &PerformanceConfig,
     ) -> Result<()>
     where
         F: Fn(Box<dyn crate::server::AsyncStream>) -> Fut + Clone + Send + 'static,
         Fut: std::future::Future<Output = Result<()>> + Send + 'static,
     {
-        let (to_vless_tx, mut to_vless_rx) = mpsc::unbounded_channel::<Bytes>();
+        // 队列按 H2 帧(16KiB)计数，至少留 4 帧，上传方向的内存上限约等于 pipe_buffer_kb
+        let upload_queue_frames = (perf.pipe_buffer_kb / 16).max(4);
+        let (to_vless_tx, mut to_vless_rx) = mpsc::channel::<Bytes>(upload_queue_frames);
         let notify = Arc::new(Notify::new());
         let transferred_bytes = Arc::new(AtomicUsize::new(0));
         
@@ -415,8 +453,7 @@ impl H2Handler {
         // 创建守卫，确保函数退出(无论成功/失败/Panic)都会清理 Session
         let _guard = SessionGuard { path: path.clone(), notify: notify.clone() };
 
-        // 扩容核心：将内部管道从 64KB 扩大到 512KB (Zero-copy buffer)
-        let (client_io, server_io) = tokio::io::duplex(524288);
+        let (client_io, server_io) = tokio::io::duplex(perf.pipe_buffer_kb * 1024);
         tokio::spawn(handler(Box::new(server_io)));
         let (mut client_read, mut client_write) = tokio::io::split(client_io);
 
@@ -454,7 +491,7 @@ impl H2Handler {
                 transferred_bytes.fetch_add(n, Ordering::Relaxed);
                 
                 // 整形发送
-                Self::send_split_data(&mut buf, &mut send_stream, &traffic_counter)?;
+                Self::send_split_data(&mut buf, &mut send_stream, &traffic_counter).await?;
             }
             send_stream.send_data(Bytes::new(), true)?;
             Ok::<(), anyhow::Error>(())
@@ -495,7 +532,7 @@ impl H2Handler {
     async fn handle_xhttp_post(
         request: Request<h2::RecvStream>,
         mut respond: SendResponse<Bytes>,
-        tx: mpsc::UnboundedSender<Bytes>,
+        tx: mpsc::Sender<Bytes>,
         traffic_counter: Arc<AtomicU64>,
     ) -> Result<()> {
         let mut body = request.into_body();
@@ -503,8 +540,9 @@ impl H2Handler {
             let chunk = chunk_res?;
             let len = chunk.len();
             traffic_counter.fetch_add(len as u64, Ordering::Relaxed);
+            // 队列满时在这里等待，推迟归还窗口，客户端上传被 h2 流控挡住
+            let _ = tx.send(chunk).await;
             let _ = body.flow_control().release_capacity(len);
-            let _ = tx.send(chunk);
         }
         
         let total = traffic_counter.load(Ordering::Relaxed);
