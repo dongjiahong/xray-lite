@@ -371,7 +371,7 @@ if [ -z "$MEM_PROFILE" ]; then
     fi
 fi
 
-# 参数含义见 README 的 Memory Tuning 一节
+# 参数含义见 docs/Performance.md 的内存调优一节
 case "$MEM_PROFILE" in
     64)   P_WORKERS=1; P_CONNS=256;  P_SWIN=256;  P_CWIN=512;   P_STREAMS=32;  P_SEND=64;   P_PIPE=64;   P_UDP=64 ;;
     128)  P_WORKERS=2; P_CONNS=512;  P_SWIN=512;  P_CWIN=2048;  P_STREAMS=64;  P_SEND=128;  P_PIPE=128;  P_UDP=128 ;;

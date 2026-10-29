@@ -13,9 +13,14 @@ Xray-lite is a lightweight, high-performance VLESS + Reality proxy server implem
 
 - [Quick Start Guide](./QuickStart.md)
 - [Configuration Reference](./Configuration.md)
+- [Client Setup](./Clients.md)
 - [Core Protocols (Reality, xhttp, XTLS-Reality64)](./Protocols.md)
+- [Performance & Memory Tuning](./Performance.md)
+- [Scripts (install / manage / run / uninstall)](./Scripts.md)
+- [Building from Source](./Development.md)
 - [XDP & Kernel Defense](./XDP_Features.md)
-- [Performance Tuning](./Performance.md)
+
+运维操作（安装、日常命令、排障、升级）见仓库根目录的 [README](../README.md)。
 
 ## Why Xray-Lite?
 

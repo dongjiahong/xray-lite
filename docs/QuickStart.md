@@ -1,76 +1,62 @@
-# Quick Start Guide
+# Quick Start
 
-Follow these steps to get your Xray-lite server up and running quickly.
+最短上手路径。完整运维手册（文件位置、排障、升级）见仓库根目录的 [README](../README.md)。
 
-## 1. Installation
+## 1. 安装
 
-Choose the version that fits your needs.
-
-### Standard Edition (Recommended)
-Best for most users on any Linux distribution.
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/undead-undead/xray-lite/main/install.sh)
+bash <(curl -fsSL https://raw.githubusercontent.com/dongjiahong/xray-lite/main/install.sh)
 ```
 
-### XDP Edition (Advanced)
-Requires Linux Kernel 5.4+ and root privileges for kernel-level protection.
+交互会问四项：部署方式、端口（默认 `2083`）、伪装域名（默认 `swdist.apple.com:443`）、是否启用 XHTTP。没有 systemd 的机器会自动用手动模式。
+
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/undead-undead/xray-lite/feature/dynamic-xdp/install.sh)
+bash <(curl -fsSL https://raw.githubusercontent.com/dongjiahong/xray-lite/main/install.sh) --manual
+bash <(curl -fsSL https://raw.githubusercontent.com/dongjiahong/xray-lite/main/install.sh) --systemd
 ```
 
-## 2. Configuration
+## 2. 看状态和配置
 
-The installer will generate a default `config.json` in the installation directory (`/opt/xray-lite/`).
-
-Key fields to update:
-- `clients -> id`: Your UUID.
-- `realitySettings -> privateKey`: Your Reality private key (generated during install).
-- `realitySettings -> shortIds`: Use the one provided or generate a new 8-16 character hex string.
-
-## 3. Manage the Service
-
-If installed via script:
 ```bash
-systemctl start xray-lite
-systemctl status xray-lite
+/opt/xray-lite/manage.sh show     # 或 xray-lite show
 ```
 
-Inspect the effective configuration (protocol stack, port, UUID, Reality, XHTTP):
+输出包含运行状态、协议栈、端口、UUID、Reality、XHTTP。
+
+## 3. 管进程
+
+| 操作 | systemd 模式 | 手动模式 |
+| :--- | :--- | :--- |
+| 启动 | `systemctl start xray-lite` | `/opt/xray-lite/run.sh start` |
+| 停止 | `systemctl stop xray-lite` | `/opt/xray-lite/run.sh stop` |
+| 重启 | `systemctl restart xray-lite` | `/opt/xray-lite/run.sh restart` |
+| 状态 | `systemctl status xray-lite` | `/opt/xray-lite/run.sh status` |
+| 日志 | `journalctl -u xray-lite -f` | `/opt/xray-lite/run.sh log` |
+
+`run.sh` 只在手动模式存在。配置相关操作两种模式都用 `manage.sh`。
+
+## 4. 取客户端配置
+
 ```bash
-/opt/xray-lite/manage.sh show     # or simply: xray-lite show
+scp root@<服务器IP>:/opt/xray-lite/clash-verge.yaml .    # mihomo / Clash Verge Rev
+scp root@<服务器IP>:/opt/xray-lite/client-config.json .  # v2rayN / v2rayNG
 ```
 
-Change only the listen port (UUID and keys stay untouched):
+传输方式必须和服务端一致，细节见 [Clients](./Clients.md)。
+
+## 5. 常用配置操作
+
 ```bash
-/opt/xray-lite/manage.sh set-port 8443
+xray-lite set-port 8443               # 改端口，同步客户端配置
+xray-lite set-domain www.apple.com    # 改 Reality 伪装域名
+xray-lite export                      # 导出配置和 vless 链接
+xray-lite rebuild                     # 清干净后完全重建
 ```
 
-Change only the Reality masquerade domain:
+## 6. 卸载
+
 ```bash
-/opt/xray-lite/manage.sh set-domain www.apple.com
+bash <(curl -fsSL https://raw.githubusercontent.com/dongjiahong/xray-lite/main/uninstall.sh)
 ```
 
-Export the current configs (prints an `scp` command and a `vless://` link):
-```bash
-/opt/xray-lite/manage.sh export
-```
-
-Rebuild from scratch (stops the service, removes leftovers, then re-runs the installer):
-```bash
-/opt/xray-lite/manage.sh rebuild
-```
-
-If running manually:
-```bash
-./vless-server -c config.json
-```
-
-## 4. Client Connection
-
-Xray-lite is **asymmetrically compatible**. You can use any standard VLESS client:
-- **Android**: v2rayNG, Matsuri
-- **iOS**: Shadowrocket, Stash, Streisand
-- **Windows/macOS**: v2rayN, Nekoray, Clash-Verge
-
-### Example VLESS Link structure:
-`vless://uuid@your_ip:443?security=reality&sni=www.microsoft.com&fp=chrome&pbk=your_public_key&sid=your_short_id&type=tcp&encryption=none#Xray-Lite-Server`
+下一步：[Configuration](./Configuration.md) · [Performance](./Performance.md) · [Scripts](./Scripts.md)
