@@ -158,6 +158,11 @@ echo ""
 echo -e "${YELLOW}[3/5] Removing files... / 删除文件...${NC}"
 rm -rf "$INSTALL_DIR"
 rm -f "$SERVICE_FILE"
+# 管理工具快捷命令（install.sh 创建，只在指向本安装目录时删除）
+if [ -L /usr/local/bin/xray-lite ] &&
+   [ "$(readlink /usr/local/bin/xray-lite)" = "$INSTALL_DIR/manage.sh" ]; then
+    rm -f /usr/local/bin/xray-lite
+fi
 if command -v systemctl >/dev/null 2>&1; then
     systemctl daemon-reload >/dev/null 2>&1 || true
     systemctl reset-failed "$SERVICE_NAME" >/dev/null 2>&1 || true

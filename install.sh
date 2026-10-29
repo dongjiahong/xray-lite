@@ -211,6 +211,16 @@ else
     exit 1
 fi
 
+# 管理工具：打印配置 / 改端口，缺失不影响服务运行
+echo "Downloading manage.sh..."
+if curl -fsSL "https://raw.githubusercontent.com/${REPO}/main/manage.sh" -o "manage.sh"; then
+    chmod +x manage.sh
+    echo -e "${GREEN}✓ manage.sh downloaded${NC}"
+else
+    rm -f manage.sh
+    echo -e "${YELLOW}⚠ 管理工具下载失败，可稍后手动放置 $INSTALL_DIR/manage.sh（不影响服务）${NC}"
+fi
+
 chmod +x vless-server keygen
 echo -e "${GREEN}✓ Files prepared / 文件已准备就绪${NC}"
 echo ""
@@ -565,6 +575,17 @@ chmod 755 $INSTALL_DIR
 chmod 644 $INSTALL_DIR/config.json
 chmod 755 $INSTALL_DIR/vless-server
 
+# Management tool shortcut / 管理工具快捷命令
+if [ -f "$INSTALL_DIR/manage.sh" ]; then
+    chmod 755 "$INSTALL_DIR/manage.sh"
+    if [ -d /usr/local/bin ] && { [ ! -e /usr/local/bin/xray-lite ] || [ -L /usr/local/bin/xray-lite ]; }; then
+        ln -sf "$INSTALL_DIR/manage.sh" /usr/local/bin/xray-lite
+        echo -e "${GREEN}✓ 管理命令已安装 / command installed: xray-lite show${NC}"
+    else
+        echo -e "${YELLOW}⚠ 跳过 /usr/local/bin/xray-lite（已存在同名文件）/ skipped, use $INSTALL_DIR/manage.sh${NC}"
+    fi
+fi
+
 # Install service / 安装服务
 if [ "$DEPLOY_MODE" = "systemd" ]; then
     echo -e "${YELLOW}[5/6] Installing systemd service... / 安装 systemd 服务...${NC}"
@@ -864,6 +885,11 @@ else
     echo -e "${YELLOW}手动运行模式不会开机自启 / manual mode does not auto-start on boot${NC}"
     echo -e "${YELLOW}Alpine: 把 $INSTALL_DIR/run.sh start 写进 /etc/local.d/xray-lite.start，再执行 rc-update add local default${NC}"
 fi
+echo ""
+echo -e "${BLUE}Config & Port / 配置与端口:${NC}"
+echo "  查看配置 / Show:      $INSTALL_DIR/manage.sh show        （装了快捷命令可直接 xray-lite show）"
+echo "  改端口 / Set port:    $INSTALL_DIR/manage.sh set-port 8443"
+echo "  只改端口，UUID / 密钥 / 传输方式保持不变；会同步客户端配置并重启服务"
 echo ""
 echo -e "${BLUE}Uninstall / 卸载:${NC}"
 echo "  bash <(curl -fsSL https://raw.githubusercontent.com/dongjiahong/xray-lite/main/uninstall.sh)"

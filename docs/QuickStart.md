@@ -20,7 +20,7 @@ bash <(curl -fsSL https://raw.githubusercontent.com/undead-undead/xray-lite/feat
 
 ## 2. Configuration
 
-The installer will generate a default `config.json`. You can find it in the installation directory (usually `/etc/xray-lite/` or the current folder).
+The installer will generate a default `config.json` in the installation directory (`/opt/xray-lite/`).
 
 Key fields to update:
 - `clients -> id`: Your UUID.
@@ -33,6 +33,16 @@ If installed via script:
 ```bash
 systemctl start xray-lite
 systemctl status xray-lite
+```
+
+Inspect the effective configuration (protocol stack, port, UUID, Reality, XHTTP):
+```bash
+/opt/xray-lite/manage.sh show     # or simply: xray-lite show
+```
+
+Change only the listen port (UUID and keys stay untouched):
+```bash
+/opt/xray-lite/manage.sh set-port 8443
 ```
 
 If running manually:
