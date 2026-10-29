@@ -13,20 +13,21 @@
 # Usage / 用法:
 #   bash manage.sh                                  # 等同 show
 #   bash manage.sh show
-#   bash manage.sh set-port 8443
-#   bash manage.sh set-port 8443 --no-restart       # 只改文件，不重启服务
-#   bash manage.sh set-port 8443 --no-clients       # 不更新客户端配置
-#   bash manage.sh set-domain www.apple.com
+#   bash manage.sh show -c /opt/xray-lite/config.json
+#   bash manage.sh set-port 2083
+#   bash manage.sh set-port 2083 --no-restart       # 只改文件，不重启服务
+#   bash manage.sh set-port 2083 --no-clients       # 不更新客户端配置
+#   bash manage.sh set-domain swdist.apple.com
 #   bash manage.sh export
 #   bash manage.sh export /root/my-configs --tar
 #   bash manage.sh rebuild
 #   bash manage.sh rebuild --yes
-#   bash manage.sh show -c /opt/xray-lite/config.json
 #
 # Options / 参数:
 #   -c, --config PATH   指定 config.json（默认 /opt/xray-lite/config.json）
-#       --no-restart    改完不重启服务
-#       --no-clients    不更新同目录下的 client-config.json / clash-verge.yaml
+#                       也可用环境变量 XRAY_LITE_CONFIG 指定
+#       --no-restart    set-port / set-domain 改完不重启服务
+#       --no-clients    set-port / set-domain 不更新同目录下的客户端配置
 #       --tar           export 时额外打包成 tar.gz
 #       -y, --yes       rebuild 时跳过确认
 #       --installer P   rebuild 时使用指定的 install.sh（离线 / 自建源）
@@ -77,22 +78,29 @@ Xray-Lite 管理工具 / Management Tool
 
 参数 / Options:
   -c, --config PATH   指定 config.json（默认 /opt/xray-lite/config.json）
-  --no-restart        改完不重启服务
-  --no-clients        不更新 client-config.json / clash-verge.yaml
+                      也可用环境变量 XRAY_LITE_CONFIG 指定
+  --no-restart        set-port / set-domain 改完文件后不重启服务
+  --no-clients        set-port / set-domain 不更新 client-config.json / clash-verge.yaml
   --tar               export 时额外打包为 tar.gz
-  -y, --yes           rebuild 时跳过确认
+  -y, --yes           rebuild 时跳过确认（非交互环境必须加）
   --installer PATH    rebuild 时使用指定的 install.sh（离线 / 自建源）
 
 示例 / Examples:
   manage.sh
-  manage.sh set-port 8443
+  manage.sh show
+  manage.sh show -c /root/config.json
+  manage.sh set-port 2083
   manage.sh set-port 2053 --no-restart
-  manage.sh set-domain www.apple.com
-  manage.sh set-domain www.apple.com:443 --no-restart
+  manage.sh set-domain swdist.apple.com
+  manage.sh set-domain addons.mozilla.org:443 --no-restart
   manage.sh export
   manage.sh export /root/out --tar
   manage.sh rebuild
   manage.sh rebuild --yes
+
+默认值 / Defaults:
+  安装脚本默认端口 2083、伪装域名 swdist.apple.com:443
+  推荐端口：2083 8443 2053 2087 2096
 EOF
 }
 
