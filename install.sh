@@ -196,29 +196,45 @@ DOWNLOAD_PREFIX="https://github.com/${REPO}/releases/download/${VERSION}"
 FALLBACK_PREFIX="https://github.com/${REPO}/releases/download/${VERSION}"
 
 echo "Downloading vless-server..."
-if curl -fsSL "${DOWNLOAD_PREFIX}/${XRAY_BINARY}" -o "vless-server"; then
+if curl -fsSL "${DOWNLOAD_PREFIX}/${XRAY_BINARY}" -o "vless-server.new"; then
+    mv -f vless-server.new vless-server
     echo -e "${GREEN}✓ vless-server downloaded${NC}"
 else
+    rm -f vless-server.new
     echo -e "${RED}Failed to download vless-server${NC}"
     exit 1
 fi
 
 echo "Downloading keygen..."
-if curl -fsSL "${DOWNLOAD_PREFIX}/${KEYGEN_BINARY}" -o "keygen"; then
+if curl -fsSL "${DOWNLOAD_PREFIX}/${KEYGEN_BINARY}" -o "keygen.new"; then
+    mv -f keygen.new keygen
     echo -e "${GREEN}✓ keygen downloaded${NC}"
 else
+    rm -f keygen.new
     echo -e "${RED}Failed to download keygen${NC}"
     exit 1
 fi
 
-# 管理工具：打印配置 / 改端口，缺失不影响服务运行
+# 管理工具：打印配置 / 改端口 / 重建，缺失不影响服务运行
+# 先下到临时文件再 mv：rebuild 正在执行 manage.sh 时，原地截断会破坏正在读的脚本
 echo "Downloading manage.sh..."
-if curl -fsSL "https://raw.githubusercontent.com/${REPO}/main/manage.sh" -o "manage.sh"; then
-    chmod +x manage.sh
+if curl -fsSL "https://raw.githubusercontent.com/${REPO}/main/manage.sh" -o "manage.sh.new"; then
+    chmod +x manage.sh.new
+    mv -f manage.sh.new manage.sh
     echo -e "${GREEN}✓ manage.sh downloaded${NC}"
 else
-    rm -f manage.sh
+    rm -f manage.sh.new
     echo -e "${YELLOW}⚠ 管理工具下载失败，可稍后手动放置 $INSTALL_DIR/manage.sh（不影响服务）${NC}"
+fi
+
+# 留一份安装脚本，manage.sh rebuild 可直接复用，不用每次重新下载
+echo "Downloading install.sh (for rebuild)..."
+if curl -fsSL "https://raw.githubusercontent.com/${REPO}/main/install.sh" -o "install.sh.new"; then
+    chmod +x install.sh.new
+    mv -f install.sh.new install.sh
+    echo -e "${GREEN}✓ install.sh saved for rebuild${NC}"
+else
+    rm -f install.sh.new
 fi
 
 chmod +x vless-server keygen
@@ -242,23 +258,23 @@ SERVER_IP=$(curl -s ifconfig.me 2>/dev/null || curl -s ip.sb 2>/dev/null || echo
 # Interactive configuration / 交互式配置
 echo ""
 if [ -t 0 ]; then
-    read -p "Server port / 服务器端口 [443]: " PORT_INPUT
-    PORT=${PORT_INPUT:-443}
+    read -p "Server port / 服务器端口 [2083]: " PORT_INPUT
+    PORT=${PORT_INPUT:-2083}
 else
-    PORT=443
-    echo "Non-interactive mode detected using default port 443 / 检测到非交互模式，使用默认端口 443"
+    PORT=2083
+    echo "Non-interactive mode detected using default port 2083 / 检测到非交互模式，使用默认端口 2083"
 fi
 
 if [[ ! "$PORT" =~ ^[0-9]+$ ]]; then
-    echo -e "${YELLOW}Invalid port, using default 443 / 端口无效，使用默认 443${NC}"
-    PORT=443
+    echo -e "${YELLOW}Invalid port, using default 2083 / 端口无效，使用默认 2083${NC}"
+    PORT=2083
 fi
 
 if [ -t 0 ]; then
-    read -p "Masquerade website / 伪装网站 [www.microsoft.com:443]: " DEST_INPUT
-    DEST=${DEST_INPUT:-www.microsoft.com:443}
+    read -p "Masquerade website / 伪装网站 [swdist.apple.com:443]: " DEST_INPUT
+    DEST=${DEST_INPUT:-swdist.apple.com:443}
 else
-    DEST="www.microsoft.com:443"
+    DEST="swdist.apple.com:443"
 fi
 
 DOMAIN=$(echo $DEST | cut -d: -f1)
@@ -762,7 +778,7 @@ fi
 echo -e "${YELLOW}[6/6] Configuring firewall... / 配置防火墙...${NC}"
 # Ensure PORT is numeric again just in case
 if [[ ! "$PORT" =~ ^[0-9]+$ ]]; then
-    PORT=443
+    PORT=2083
 fi
 
 if command -v ufw &> /dev/null; then
@@ -888,8 +904,11 @@ fi
 echo ""
 echo -e "${BLUE}Config & Port / 配置与端口:${NC}"
 echo "  查看配置 / Show:      $INSTALL_DIR/manage.sh show        （装了快捷命令可直接 xray-lite show）"
-echo "  改端口 / Set port:    $INSTALL_DIR/manage.sh set-port 8443"
-echo "  只改端口，UUID / 密钥 / 传输方式保持不变；会同步客户端配置并重启服务"
+echo "  改端口 / Set port:    $INSTALL_DIR/manage.sh set-port 2083"
+echo "  改域名 / Set domain:  $INSTALL_DIR/manage.sh set-domain www.apple.com"
+echo "  导出配置 / Export:    $INSTALL_DIR/manage.sh export"
+echo "  完全重建 / Rebuild:   $INSTALL_DIR/manage.sh rebuild"
+echo "  前三项只改对应字段，UUID / 密钥 / 传输方式保持不变"
 echo ""
 echo -e "${BLUE}Uninstall / 卸载:${NC}"
 echo "  bash <(curl -fsSL https://raw.githubusercontent.com/dongjiahong/xray-lite/main/uninstall.sh)"

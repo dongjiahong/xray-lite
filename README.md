@@ -52,11 +52,41 @@ bash <(curl -fsSL https://raw.githubusercontent.com/dongjiahong/xray-lite/main/i
 | 提问 | 默认值 | 说明 |
 | :--- | :--- | :--- |
 | 部署方式 | systemd（无 systemd 则自动用手动模式） | 决定进程由谁托管，见下方对照 |
-| 服务器端口 | `443` | 之后可随时用 `manage.sh set-port` 改 |
-| 伪装网站 | `www.microsoft.com:443` | Reality 借用的目标站，填 `域名:443` |
+| 服务器端口 | `2083` | 之后可随时用 `manage.sh set-port` 改 |
+| 伪装网站 | `swdist.apple.com:443` | Reality 借用的目标站，填 `域名:443` |
 | 是否启用 XHTTP | `N` | 启用后还要填 path（`/`）和 host（可空） |
 
 非交互运行（`curl \| bash`、CI、无 TTY）时不会提问，直接使用上表默认值；需要覆盖就加参数或环境变量。
+
+### 推荐域名与端口
+
+Reality 的伪装目标站必须同时满足：**支持 TLS 1.3、支持 HTTP/2、证书有效且与域名匹配、从你的 VPS 能直接访问**。下面几个是常用的，任选其一（换之前建议按后面的命令自测一遍）：
+
+| 域名 | 说明 |
+| :--- | :--- |
+| `swdist.apple.com` | 安装脚本默认值 |
+| `addons.mozilla.org` | |
+| `assets.unicornplatform.net` | |
+| `s0.awsstatic.com` | |
+| `speed.cloudflare.com` | |
+
+换域名前先在服务器上验证一遍，四项都过了再用：
+
+```bash
+for d in swdist.apple.com addons.mozilla.org assets.unicornplatform.net s0.awsstatic.com speed.cloudflare.com; do
+    printf '%-32s ' "$d"
+    curl -sI --tlsv1.3 --http2 --max-time 5 "https://$d" \
+        -o /dev/null -w 'HTTP/%{http_version} %{http_code}\n' || echo "不可用"
+done
+```
+
+输出 `HTTP/2 200`（或 30x/40x，只要是 HTTP/2 且有响应）就说明可用。全部失败说明这台机器到目标站不通，换个域名或换个站。
+
+端口推荐：`2083`、`8443`、`2053`、`2087`、`2096`。
+
+- 安装脚本默认用 `2083`。`2083` / `2087` / `2096` 是 cPanel / WHM 的常用端口，`8443` / `2053` 是常见的 HTTPS 替代端口，混在正常流量里不显眼。
+- `443` 是最容易被针对性封锁的端口，也是本项目的原始默认值；换了更稳妥。
+- 端口实际能否连通取决于云厂商安全组，脚本只能改本机防火墙。
 
 ### 两种部署方式
 
@@ -134,6 +164,16 @@ xray-lite show                        # 装了快捷命令
 # —— 改端口（UUID / 密钥 / 传输方式保持不变）——
 xray-lite set-port 8443
 
+# —— 改伪装域名（只动 Reality 的 dest / serverNames）——
+xray-lite set-domain www.apple.com
+
+# —— 导出改好的配置（打印 scp 命令 + VLESS 链接）——
+xray-lite export
+xray-lite export /root/out --tar
+
+# —— 完全重建（清干净旧残留后重新生成全部配置）——
+xray-lite rebuild
+
 # —— 服务管理（systemd）——
 systemctl status xray-lite
 systemctl restart xray-lite
@@ -161,6 +201,78 @@ bash <(curl -fsSL https://raw.githubusercontent.com/dongjiahong/xray-lite/main/u
 4. 放行新端口（ufw / firewalld，需 root）
 5. 重启服务并检查新端口是否在监听
 
+### 改伪装域名
+
+```bash
+xray-lite set-domain www.apple.com          # dest 端口沿用原值（通常 443）
+xray-lite set-domain www.apple.com:8443     # 显式指定 dest 端口
+```
+
+只改这三处，UUID、私钥、shortId、传输方式都不动：
+
+| 位置 | 改动 |
+| :--- | :--- |
+| `config.json` | `realitySettings.dest` → `域名:端口` |
+| `config.json` | `realitySettings.serverNames` → `["域名", "*.域名"]`（IP 则只写一条） |
+| 客户端配置 | `serverName` / `servername` 同步为新域名 |
+
+如果 `xhttpSettings.host` 原本填了具体域名，会一起改成新域名；留空表示任意域名，不动。改完需要重启服务才生效（`--no-restart` 可跳过）。
+
+**换域名要挑对目标站**：必须支持 TLS 1.3 和 HTTP/2、证书有效、域名与 SNI 匹配，而且从你的 VPS 能直连。Reality 是把流量伪装成访问这个站，站选得不合适会直接握手失败。
+
+### 导出配置
+
+```bash
+xray-lite export                      # 默认导出到 ~/xray-lite-export-<时间戳>/
+xray-lite export /root/out            # 指定目录
+xray-lite export /root/out --tar      # 额外打包成 /root/out.tar.gz
+```
+
+导出内容：
+
+| 文件 | 说明 |
+| :--- | :--- |
+| `config.json` | 服务端配置，权限设为 `600` |
+| `client-config.json` | Xray 系客户端 |
+| `clash-verge.yaml` | mihomo / Clash Verge Rev |
+| `vless-link.txt` | 拼好的 `vless://` 链接，可直接导入或扫码 |
+
+跑完会打印 `scp` 命令，直接复制到本地执行即可：
+
+```bash
+scp root@<服务器IP>:/root/xray-lite-export-20260101-120000.tar.gz .
+```
+
+导出的 `config.json` 含 Reality 私钥，`vless-link.txt` 含 UUID，别提交到公开仓库。
+
+### 完全重建
+
+```bash
+xray-lite rebuild           # 交互确认后重建
+xray-lite rebuild --yes     # 跳过确认（脚本化）
+```
+
+等价于「卸载干净再重新安装」，会重新生成 UUID、Reality 密钥、shortId 和两份客户端配置。和直接重跑 `install.sh` 的区别是：它**先把上一轮的残留清干净**，不会留下旧 unit、旧 pid、旧日志。
+
+执行顺序：
+
+| 步骤 | 做什么 |
+| :--- | :--- |
+| 0 | 检查 root、确认意图、确认能拿到 `install.sh`（拿不到就直接退出，不动任何东西） |
+| 1 | 备份 `config.json` / 两份客户端配置到 `~/xray-lite-backup-<时间戳>/` |
+| 2 | 停服务：`systemctl stop`（并 `disable`）、`run.sh stop`、按 pidfile 结束、按路径 `pkill`；10 秒不退则 `kill -9` |
+| 3 | 清残留：systemd unit、journald 轮转配置、`run.sh`、pid、日志、旧配置、`*.bak.*`、`*.new` 临时文件、`/usr/local/bin/xray-lite` 快捷命令 |
+| 4 | 调用 `install.sh` 重新安装（重新询问端口和域名，重新下载二进制） |
+
+几个设计上的取舍：
+
+- **只杀本安装目录下的 `vless-server`**，不会误伤机器上别的同名进程。
+- **保留 `manage.sh` 自己**。安装脚本下载新版时先写 `manage.sh.new` 再 `mv`，`mv` 是原子替换，正在执行的这个脚本不会被截断。
+- **拿不到安装脚本就不开工**：优先用 `/opt/xray-lite/install.sh`（安装时留下的副本，离线可用），没有才联网下载；`--installer PATH` 可以指定自建源或离线包。
+- 安装失败时返回非零退出码，并打印用备份恢复的命令。
+
+重建完成后会自动跑一次 `show`，并提示用 `export` 导出新配置。
+
 ## 脚本参数参考
 
 ### `install.sh`
@@ -181,10 +293,16 @@ bash <(curl -fsSL https://raw.githubusercontent.com/dongjiahong/xray-lite/main/u
 | :--- | :--- |
 | `show` | 打印当前配置（默认命令，可省略） |
 | `set-port <端口>` | 只改监听端口，其它字段原样保留 |
+| `set-domain <域名>[:端口]` | 只改 Reality 的 dest / serverNames，其它字段原样保留 |
+| `export [目录]` | 导出配置文件，打印 scp 命令和 VLESS 链接 |
+| `rebuild` | 完全重建：清干净旧残留后重新安装 |
 | `-c`, `--config PATH` | 指定 `config.json`，默认 `/opt/xray-lite/config.json` |
 | `XRAY_LITE_CONFIG=PATH` | 同上，环境变量形式 |
 | `--no-restart` | 只改文件不重启 |
 | `--no-clients` | 不更新两份客户端配置 |
+| `--tar` | `export` 时额外打包为 `tar.gz` |
+| `-y`, `--yes` | `rebuild` 时跳过确认 |
+| `--installer PATH` | `rebuild` 时使用指定的 `install.sh` |
 | `-h`, `--help` | 查看用法 |
 
 已经装好的机器想补这个脚本，不用重装：
@@ -235,7 +353,7 @@ ln -sf /opt/xray-lite/manage.sh /usr/local/bin/xray-lite   # 可选
 xray-lite set-port 8443
 ```
 
-脚本只处理本机防火墙。云厂商的**安全组 / 控制台防火墙**要自己去放行 `TCP 新端口`。如果封的是 IP 而不是端口，换端口无效。常用备选：`8443`、`2053`、`2083`、`2087`、`2096`、`8080`。
+脚本只处理本机防火墙。云厂商的**安全组 / 控制台防火墙**要自己去放行 `TCP 新端口`。如果封的是 IP 而不是端口，换端口无效。推荐端口：`2083`、`8443`、`2053`、`2087`、`2096`。
 
 **服务起不来**
 
@@ -261,9 +379,23 @@ kill $(pidof vless-server)
 
 安装时 `/usr/local/bin/xray-lite` 已存在同名文件会被跳过，直接用 `/opt/xray-lite/manage.sh`，或者手动建软链。
 
-**改了端口，客户端没跟着变**
+**换了端口 / 域名，客户端没跟着变**
 
-`set-port` 会同步同目录下的两份客户端配置；如果你用 `--no-clients`、或者客户端配置在别处，需要自己改。`show` 会标出端口不一致。
+`set-port` 和 `set-domain` 会同步同目录下的两份客户端配置；如果你用 `--no-clients`、或者客户端配置在别处，需要自己改。`show` 会标出端口不一致。改完记得 `xray-lite export` 重新导出一份。
+
+**换了伪装域名后完全连不上**
+
+大概率是目标站不合格。Reality 的 `dest` 必须同时满足：支持 TLS 1.3、支持 HTTP/2、证书有效且与域名匹配、从 VPS 能直连。在服务器上验证：
+
+```bash
+curl -sI --tlsv1.3 --http2 "https://www.apple.com" | head -n 1
+```
+
+返回 `HTTP/2 200` 之类才算可用。换回默认域名：
+
+```bash
+xray-lite set-domain swdist.apple.com
+```
 
 ## 升级
 
@@ -293,6 +425,8 @@ bash <(curl -fsSL https://raw.githubusercontent.com/dongjiahong/xray-lite/main/i
 ```
 
 重跑会得到新的 UUID、密钥和客户端配置，客户端需要重新导入。想保留旧参数，就在装完后手工把 `performance` 等段落合并回去。
+
+更彻底的做法是用 `xray-lite rebuild`：它在重装前会停服务、清掉旧 unit / 日志 / 临时文件，并自动备份旧配置。详见[完全重建](#完全重建)。
 
 ## 内存调优
 

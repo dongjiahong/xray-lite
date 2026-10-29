@@ -45,6 +45,21 @@ Change only the listen port (UUID and keys stay untouched):
 /opt/xray-lite/manage.sh set-port 8443
 ```
 
+Change only the Reality masquerade domain:
+```bash
+/opt/xray-lite/manage.sh set-domain www.apple.com
+```
+
+Export the current configs (prints an `scp` command and a `vless://` link):
+```bash
+/opt/xray-lite/manage.sh export
+```
+
+Rebuild from scratch (stops the service, removes leftovers, then re-runs the installer):
+```bash
+/opt/xray-lite/manage.sh rebuild
+```
+
 If running manually:
 ```bash
 ./vless-server -c config.json
